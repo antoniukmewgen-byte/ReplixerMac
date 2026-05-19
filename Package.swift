@@ -13,7 +13,7 @@ let package = Package(
     dependencies: [
         // Telegram MTProto client (Swift wrapper for TDLib)
         // Check latest version at: https://github.com/Swiftgram/TDLibKit/releases
-        .package(url: "https://github.com/Swiftgram/TDLibKit", from: "0.1.0"),
+        .package(url: "https://github.com/Swiftgram/TDLibKit", branch: "main"),
     ],
     targets: [
         .executableTarget(
@@ -22,10 +22,7 @@ let package = Package(
                 .product(name: "TDLibKit", package: "TDLibKit"),
             ],
             path: "Sources/ReplixerMac",
-            resources: [
-                .process("Resources"),
-            ],
-            swiftSettings: [
+swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
             ]
         ),
