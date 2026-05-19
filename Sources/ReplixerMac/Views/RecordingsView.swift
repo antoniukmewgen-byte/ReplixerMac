@@ -216,13 +216,14 @@ struct RecordingDetailView: View {
         }
     }
 
+    @ViewBuilder
     private var uploadStateBadge: some View {
         switch recording.uploadState {
-        case .pending:    return Text("Очікування").foregroundStyle(.secondary)
-        case .uploadingDrive: return Text("Drive…").foregroundStyle(.orange)
-        case .uploadingTelegram: return Text("Telegram…").foregroundStyle(.blue)
-        case .done:       return Text("✓ Завантажено").foregroundStyle(.green)
-        case .failed:     return Text("✗ Помилка").foregroundStyle(.red)
+        case .pending:          Text("Очікування").foregroundStyle(.secondary)
+        case .uploadingDrive:   Text("Drive…").foregroundStyle(.orange)
+        case .uploadingTelegram: Text("Telegram…").foregroundStyle(.blue)
+        case .done:             Text("✓ Завантажено").foregroundStyle(.green)
+        case .failed:           Text("✗ Помилка").foregroundStyle(.red)
         }
     }
 

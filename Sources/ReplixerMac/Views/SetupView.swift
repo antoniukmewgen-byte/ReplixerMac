@@ -43,7 +43,7 @@ struct SetupView: View {
                 } else {
                     Text("\(target + 1)")
                         .font(.callout.bold())
-                        .foregroundStyle(isNow ? .accent : .secondary)
+                        .foregroundStyle(isNow ? Color.accentColor : Color.secondary)
                 }
             }
             Text(step.title)
