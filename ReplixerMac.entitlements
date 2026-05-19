@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Microphone access -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Outbound network (Google Drive, Telegram) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- App Sandbox — set to false for non-MAS distribution to avoid SCK restrictions -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>

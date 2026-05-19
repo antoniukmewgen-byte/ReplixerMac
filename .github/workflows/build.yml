@@ -1,0 +1,50 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # запуск вручну з GitHub
+
+jobs:
+  build:
+    runs-on: macos-14   # безкоштовний Mac з Xcode вже встановленим
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build (Release)
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+
+      - name: Make .app bundle
+        run: |
+          mkdir -p .build/Replixer.app/Contents/MacOS
+          mkdir -p .build/Replixer.app/Contents/Resources
+          cp $(swift build -c release --show-bin-path)/ReplixerMac .build/Replixer.app/Contents/MacOS/Replixer
+          chmod +x .build/Replixer.app/Contents/MacOS/Replixer
+          cp Info.plist .build/Replixer.app/Contents/Info.plist
+          codesign --sign "-" --force --deep --timestamp=none \
+            --entitlements ReplixerMac.entitlements \
+            .build/Replixer.app
+
+      - name: Create DMG
+        run: |
+          mkdir -p .build/dmg_staging
+          cp -r .build/Replixer.app .build/dmg_staging/
+          ln -s /Applications .build/dmg_staging/Applications
+          hdiutil create \
+            -volname "Replixer 1.0.0" \
+            -srcfolder .build/dmg_staging \
+            -ov -format UDZO -fs HFS+ \
+            Replixer-1.0.0.dmg
+
+      - name: Upload DMG as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Replixer-DMG
+          path: Replixer-1.0.0.dmg
+          retention-days: 30
