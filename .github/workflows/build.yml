@@ -3,11 +3,12 @@ name: Build macOS DMG
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # запуск вручну з GitHub
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-14   # безкоштовний Mac з Xcode вже встановленим
+    runs-on: macos-14        # arm64 (Apple Silicon runner)
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -16,15 +17,27 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Build (Release)
+      # Кешуємо SPM залежності — TDLib великий, без кешу щоразу 15+ хв
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/checkouts
+            .build/repositories
+            ~/.cache/org.swift.swiftpm
+          key: spm-${{ hashFiles('Package.swift') }}
+          restore-keys: spm-
+
+      - name: Build (Release, arm64 only)
         run: |
-          swift build -c release --arch arm64 --arch x86_64
+          swift build -c release
 
       - name: Make .app bundle
         run: |
+          BIN=$(swift build -c release --show-bin-path)
           mkdir -p .build/Replixer.app/Contents/MacOS
           mkdir -p .build/Replixer.app/Contents/Resources
-          cp $(swift build -c release --show-bin-path)/ReplixerMac .build/Replixer.app/Contents/MacOS/Replixer
+          cp "$BIN/ReplixerMac" .build/Replixer.app/Contents/MacOS/Replixer
           chmod +x .build/Replixer.app/Contents/MacOS/Replixer
           cp Info.plist .build/Replixer.app/Contents/Info.plist
           codesign --sign "-" --force --deep --timestamp=none \
@@ -42,7 +55,7 @@ jobs:
             -ov -format UDZO -fs HFS+ \
             Replixer-1.0.0.dmg
 
-      - name: Upload DMG as artifact
+      - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: Replixer-DMG
