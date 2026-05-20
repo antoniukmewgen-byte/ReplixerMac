@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-13        # Intel x86_64 — VirtualBox on Windows needs x86_64
     timeout-minutes: 60
 
     steps:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+        run: sudo xcode-select -s /Applications/Xcode_15.2.app
 
       - name: Cache SPM
         uses: actions/cache@v4
@@ -24,14 +24,12 @@ jobs:
             .build/checkouts
             .build/repositories
             ~/.cache/org.swift.swiftpm
-          key: spm-${{ hashFiles('Package.swift') }}
-          restore-keys: spm-
+          key: spm-x86-${{ hashFiles('Package.swift') }}
+          restore-keys: spm-x86-
 
-      - name: Build (Release, arm64 only)
+      - name: Build (Release, x86_64)
         run: |
-          # Збираємо, помилки — у файл щоб не загубились серед warnings TDLib
-          swift build -c release -j 2 2>&1 | tee build_log.txt
-          # Перевіряємо exit code окремо
+          swift build -c release 2>&1 | tee build_log.txt
           if grep -q "error:" build_log.txt; then
             echo "=== SWIFT ERRORS ==="
             grep "error:" build_log.txt
