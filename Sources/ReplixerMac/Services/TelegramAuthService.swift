@@ -16,10 +16,15 @@ final class TelegramAuthService: ObservableObject {
     @Published private(set) var authState: AuthState = .idle
     @Published private(set) var currentUserName: String = ""
 
+    // TDLibClientManager creates raw TDLibClient;
+    // TdApi wraps it for typed API calls.
     private var api: TdApi?
     private let manager = TDLibClientManager()
     private var pendingPhone: String = ""
     private let settings: AppSettings
+
+    // JSONDecoder for TDLib JSON updates (snake_case handled via CodingKeys in generated types)
+    private nonisolated static let decoder = JSONDecoder()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -30,15 +35,15 @@ final class TelegramAuthService: ObservableObject {
     func start() {
         guard api == nil else { return }
 
-        // New TDLibKit API: callback-based, no async stream
-        api = manager.createClient(
-            updateHandler: { [weak self] update, _ in
-                Task { @MainActor [weak self] in
-                    await self?.handle(update: update)
-                }
-            },
-            completionQueue: .global(qos: .userInitiated)
-        )
+        // createClient returns TDLibClient; updateHandler receives raw JSON Data
+        let tdLibClient = manager.createClient { [weak self] (data: Data) in
+            guard let update = try? Self.decoder.decode(Update.self, from: data) else { return }
+            Task { @MainActor [weak self] in
+                await self?.handle(update: update)
+            }
+        }
+
+        api = TdApi(client: tdLibClient)
     }
 
     func stop() {
@@ -151,7 +156,7 @@ final class TelegramAuthService: ObservableObject {
                 useTestDc:             false
             )
         } catch {
-            authState = .error("TDLib config failed: \(error.localizedDescription)")
+            authState = .error("TDLib config: \(error.localizedDescription)")
         }
     }
 }
