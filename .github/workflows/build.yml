@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-13        # Intel x86_64 — VirtualBox on Windows needs x86_64
+    runs-on: macos-14        # arm64 runner; cross-compiles to x86_64 below
     timeout-minutes: 60
 
     steps:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.2.app
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Cache SPM
         uses: actions/cache@v4
@@ -29,7 +29,7 @@ jobs:
 
       - name: Build (Release, x86_64)
         run: |
-          swift build -c release 2>&1 | tee build_log.txt
+          swift build -c release --arch x86_64 -j 2 2>&1 | tee build_log.txt
           if grep -q "error:" build_log.txt; then
             echo "=== SWIFT ERRORS ==="
             grep "error:" build_log.txt
@@ -45,7 +45,7 @@ jobs:
 
       - name: Make .app bundle
         run: |
-          BIN=$(swift build -c release --show-bin-path)
+          BIN=$(swift build -c release --arch x86_64 --show-bin-path)
           mkdir -p .build/Replixer.app/Contents/MacOS
           mkdir -p .build/Replixer.app/Contents/Resources
           cp "$BIN/ReplixerMac" .build/Replixer.app/Contents/MacOS/Replixer
