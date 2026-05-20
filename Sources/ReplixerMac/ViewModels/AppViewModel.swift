@@ -168,7 +168,7 @@ final class AppViewModel: ObservableObject {
     private func startDurationTimer() {
         recordingDuration = 0
         durationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.recordingDuration += 1 }
+            DispatchQueue.main.async { self?.recordingDuration += 1 }
         }
     }
 

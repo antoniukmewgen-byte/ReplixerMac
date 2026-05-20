@@ -1,13 +1,14 @@
 import Foundation
+import AVFoundation
+import CoreMedia
 import TDLibKit
 
-// Sends a finished recording to a Telegram chat using TDLib (MTProto).
+@MainActor
 final class TelegramUploadService {
 
     private let auth: TelegramAuthService
     private weak var api: TdApi?
 
-    var onProgress:  ((Double) -> Void)?
     var onCompleted: (() -> Void)?
     var onFailed:    ((String) -> Void)?
 
@@ -20,41 +21,34 @@ final class TelegramUploadService {
     // MARK: - Upload
 
     func sendRecording(fileURL: URL, chatId: Int64, caption: String) async {
-        guard let api else {
-            onFailed?("TDLib not initialized")
-            return
-        }
-        guard auth.authState == .ready else {
-            onFailed?("Telegram не авторизовано")
-            return
-        }
+        guard let api else { onFailed?("TDLib not initialized"); return }
+        guard auth.authState == .ready else { onFailed?("Telegram не авторизовано"); return }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            onFailed?("Файл не знайдено: \(fileURL.lastPathComponent)")
-            return
+            onFailed?("Файл не знайдено: \(fileURL.lastPathComponent)"); return
         }
 
         do {
             let durationSecs = Int(await assetDuration(fileURL))
             let formattedCaption = FormattedText(entities: [], text: caption)
 
-            let content = InputMessageContent.inputMessageAudio(
-                .init(
-                    album_cover_thumbnail: nil,
-                    audio: .inputFileLocal(.init(path: fileURL.path)),
-                    caption: formattedCaption,
-                    duration: durationSecs,
-                    performer: "",
-                    title: fileURL.deletingPathExtension().lastPathComponent
-                )
+            let audioContent = InputMessageAudio(
+                albumCoverThumbnail: nil,
+                audio: .inputFileLocal(.init(path: fileURL.path)),
+                caption: formattedCaption,
+                duration: durationSecs,
+                performer: "",
+                title: fileURL.deletingPathExtension().lastPathComponent
             )
+
+            let content = InputMessageContent.inputMessageAudio(audioContent)
 
             _ = try await api.sendMessage(
                 chatId: chatId,
                 inputMessageContent: content,
-                messageThreadId: 0,
                 options: nil,
                 replyMarkup: nil,
-                replyTo: nil
+                replyTo: nil,
+                topicId: nil
             )
 
             onCompleted?()
@@ -63,7 +57,6 @@ final class TelegramUploadService {
         }
     }
 
-    // Find a chat by username or ID string (returns chatId)
     func findChat(query: String) async -> Int64? {
         guard let api else { return nil }
         if let id = Int64(query) { return id }
@@ -80,7 +73,3 @@ final class TelegramUploadService {
         return CMTimeGetSeconds(duration)
     }
 }
-
-// AVFoundation import for CMTimeGetSeconds
-import AVFoundation
-import CoreMedia

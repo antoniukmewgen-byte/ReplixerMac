@@ -40,11 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    // Resolved lazily from the SwiftUI environment (set by AppDelegate bridge in practice)
-    private var appViewModel: AppViewModel? {
-        (NSApp.windows.first?.contentViewController as? NSHostingController<AnyView>)?
-            .rootView as? AppViewModel
-    }
+    private var appViewModel: AppViewModel? { nil }
 }
 
 // MARK: - Notifications

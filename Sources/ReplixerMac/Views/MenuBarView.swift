@@ -46,7 +46,6 @@ struct MenuBarView: View {
             Image(systemName: appVM.activeSession != nil ? "record.circle.fill" : "waveform")
                 .font(.title2)
                 .foregroundStyle(statusColor)
-                .symbolEffect(.pulse, isActive: appVM.activeSession != nil)
         }
     }
 
