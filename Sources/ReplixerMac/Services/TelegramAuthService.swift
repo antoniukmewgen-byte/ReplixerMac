@@ -36,7 +36,7 @@ final class TelegramAuthService: ObservableObject {
         guard api == nil else { return }
 
         // createClient returns TDLibClient; updateHandler receives raw JSON Data
-        let tdLibClient = manager.createClient { [weak self] (data: Data) in
+        let tdLibClient = manager.createClient { [weak self] (data: Data, _: TDLibClient) in
             guard let update = try? Self.decoder.decode(Update.self, from: data) else { return }
             Task { @MainActor [weak self] in
                 await self?.handle(update: update)

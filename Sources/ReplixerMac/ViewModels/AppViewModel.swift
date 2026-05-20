@@ -58,11 +58,7 @@ final class AppViewModel: ObservableObject {
     // MARK: - Monitoring
 
     func startMonitoring() async {
-        do {
-            try await audioTap.startMonitoring()
-        } catch {
-            appError = "Помилка запуску моніторингу: \(error.localizedDescription)"
-        }
+        await audioTap.startMonitoring()
     }
 
     // MARK: - Service wiring
@@ -168,7 +164,8 @@ final class AppViewModel: ObservableObject {
     private func startDurationTimer() {
         recordingDuration = 0
         durationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async { self?.recordingDuration += 1 }
+            guard let s = self else { return }
+            DispatchQueue.main.async { s.recordingDuration += 1 }
         }
     }
 
