@@ -17,7 +17,7 @@ final class TelegramAuthService: ObservableObject {
     @Published private(set) var currentUserName: String = ""
 
     private var api: TdApi?
-    private var updateTask: Task<Void, Never>?
+    private let manager = TDLibClientManager()
     private var pendingPhone: String = ""
     private let settings: AppSettings
 
@@ -29,21 +29,19 @@ final class TelegramAuthService: ObservableObject {
 
     func start() {
         guard api == nil else { return }
-        let tdClient = TdClientImpl(completionQueue: .global(qos: .userInitiated))
-        let client = TdApi(client: tdClient)
-        api = client
-        updateTask = Task { [weak self, weak client] in
-            guard let client else { return }
-            for await update in await client.updates {
-                guard !Task.isCancelled else { break }
-                await self?.handle(update: update)
-            }
-        }
+
+        // New TDLibKit API: callback-based, no async stream
+        api = manager.createClient(
+            updateHandler: { [weak self] update, _ in
+                Task { @MainActor [weak self] in
+                    await self?.handle(update: update)
+                }
+            },
+            completionQueue: .global(qos: .userInitiated)
+        )
     }
 
     func stop() {
-        updateTask?.cancel()
-        updateTask = nil
         api = nil
     }
 
@@ -122,7 +120,9 @@ final class TelegramAuthService: ObservableObject {
                 currentUserName = [me.firstName, me.lastName]
                     .filter { !$0.isEmpty }.joined(separator: " ")
             }
-        case .authorizationStateLoggingOut, .authorizationStateClosing, .authorizationStateClosed:
+        case .authorizationStateLoggingOut,
+             .authorizationStateClosing,
+             .authorizationStateClosed:
             authState = .idle
             settings.isTelegramAuthorized = false
         default:

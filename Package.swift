@@ -3,16 +3,14 @@ import PackageDescription
 
 // ⚠️  Before building:
 //  1. Get api_id / api_hash at https://my.telegram.org/apps
-//  2. Replace placeholders in TelegramAuthService.swift
-//  3. In Xcode: add ReplixerMac.entitlements + set LSUIElement=YES in Info.plist
-//  4. Grant Accessibility permission in System Settings → Privacy → Screen Recording
+//  2. Enter api_id/api_hash in Setup Wizard on first launch
+//  3. Place service_account.json next to the .app for Google Drive
+//  4. Grant Screen Recording + Microphone in System Settings on first run
 
 let package = Package(
     name: "ReplixerMac",
     platforms: [.macOS(.v13)],
     dependencies: [
-        // Telegram MTProto client (Swift wrapper for TDLib)
-        // Check latest version at: https://github.com/Swiftgram/TDLibKit/releases
         .package(url: "https://github.com/Swiftgram/TDLibKit", branch: "main"),
     ],
     targets: [
@@ -21,10 +19,7 @@ let package = Package(
             dependencies: [
                 .product(name: "TDLibKit", package: "TDLibKit"),
             ],
-            path: "Sources/ReplixerMac",
-swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-            ]
+            path: "Sources/ReplixerMac"
         ),
     ]
 )
