@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14        # arm64 (Apple Silicon runner)
+    runs-on: macos-14
     timeout-minutes: 60
 
     steps:
@@ -17,7 +17,6 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      # Кешуємо SPM залежності — TDLib великий, без кешу щоразу 15+ хв
       - name: Cache SPM
         uses: actions/cache@v4
         with:
@@ -28,15 +27,23 @@ jobs:
           key: spm-${{ hashFiles('Package.swift') }}
           restore-keys: spm-
 
-      - name: Add swap space (prevent OOM)
-        run: |
-          sudo dd if=/dev/zero of=/var/swap bs=1m count=8192
-          sudo chmod 600 /var/swap
-          sudo swapon /var/swap
-
       - name: Build (Release, arm64 only)
         run: |
-          swift build -c release -j 2
+          # Збираємо, помилки — у файл щоб не загубились серед warnings TDLib
+          swift build -c release -j 2 2>&1 | tee build_log.txt
+          # Перевіряємо exit code окремо
+          if grep -q "error:" build_log.txt; then
+            echo "=== SWIFT ERRORS ==="
+            grep "error:" build_log.txt
+            exit 1
+          fi
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_log.txt
 
       - name: Make .app bundle
         run: |
