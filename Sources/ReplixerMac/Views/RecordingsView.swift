@@ -50,11 +50,16 @@ struct RecordingsView: View {
     }
 
     private var emptyDetail: some View {
-        ContentUnavailableView(
-            "Виберіть запис",
-            systemImage: "waveform",
-            description: Text("Деталі запису з'являться тут")
-        )
+        VStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("Виберіть запис")
+                .font(.title2.bold())
+            Text("Деталі запису з'являться тут")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ToolbarContentBuilder
