@@ -84,8 +84,8 @@ final class AppViewModel: ObservableObject {
         }
 
         // Google Drive progress
-        driveService.onProgress = { [weak self] progress in
-            DispatchQueue.main.async { /* update per-recording progress if needed */ }
+        driveService.onProgress = { _ in
+            // update per-recording progress if needed
         }
     }
 

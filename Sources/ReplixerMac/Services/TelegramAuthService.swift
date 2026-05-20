@@ -43,7 +43,7 @@ final class TelegramAuthService: ObservableObject {
             }
         }
 
-        api = TdApi(client: tdLibClient)
+        api = TdApi(client: tdLibClient as! any TdClient)
     }
 
     func stop() {
