@@ -28,9 +28,15 @@ jobs:
           key: spm-${{ hashFiles('Package.swift') }}
           restore-keys: spm-
 
+      - name: Add swap space (prevent OOM)
+        run: |
+          sudo dd if=/dev/zero of=/var/swap bs=1m count=8192
+          sudo chmod 600 /var/swap
+          sudo swapon /var/swap
+
       - name: Build (Release, arm64 only)
         run: |
-          swift build -c release
+          swift build -c release -j 2
 
       - name: Make .app bundle
         run: |
