@@ -83,6 +83,27 @@ if CommandLine.arguments.contains("--list-audio-processes-smoke-test") {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--telegram-login-smoke-test") {
+    print("[\(timestamp())] Крок Phase 4.1: смоук-тест авторизації Telegram (TDLib). Якщо це перший запуск — знадобиться ввести номер телефону, код підтвердження і, можливо, пароль 2FA.")
+    Task {
+        let telegramAuthClient = TelegramAuthClient()
+        do {
+            try await telegramAuthClient.login()
+            print("[\(timestamp())] ✅ Смоук-тест завершено — авторизація Telegram пройшла успішно.")
+        } catch TelegramAuthError.missingCredentials {
+            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнені telegramApiId/telegramApiHash — додай їх (значення з https://my.telegram.org) і спробуй знову.")
+        } catch {
+            print("[\(timestamp())] ❌ Смоук-тест провалився: \(error)")
+        }
+        // Must close TDLib's client cleanly before exit(0) below — killing
+        // the process while its background td_receive thread is still
+        // running crashes with SIGSEGV (confirmed on a real run).
+        telegramAuthClient.shutdown()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--mic-smoke-test") {
     print("[\(timestamp())] Крок A (1.2): смоук-тест мікрофона.")
     // requestRecordPermission's completion is async (may land on any queue),

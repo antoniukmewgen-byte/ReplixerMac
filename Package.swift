@@ -10,9 +10,19 @@ import PackageDescription
 let package = Package(
     name: "ReplixerMacCallPoC",
     platforms: [.macOS("14.2")],
+    dependencies: [
+        // Phase 4: Telegram login/upload via TDLib. Swift wrapper generated
+        // from TDLib's tl-schema; pulls in TDLibFramework as a prebuilt
+        // binary xcframework (prebuilt TDLib itself, no local C++ build
+        // needed) as its own transitive dependency.
+        .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.66-022d6020")
+    ],
     targets: [
         .executableTarget(
             name: "ReplixerMacCallPoC",
+            dependencies: [
+                .product(name: "TDLibKit", package: "TDLibKit")
+            ],
             path: "Sources/ReplixerMacCallPoC"
         )
     ]

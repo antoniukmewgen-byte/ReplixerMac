@@ -24,12 +24,28 @@ final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case managerName
+    // Phase 4: my.telegram.org app credentials, required by
+    // setTdlibParameters before TDLib will do anything. Unlike managerName,
+    // these have no sane default — nil until hand-edited into settings.json
+    // (same "no UI yet, edit the JSON" pattern as managerName), and
+    // TelegramAuthClient refuses to start login without both present.
+    var telegramApiId: Int? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    var telegramApiHash: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
     }
 
-    private init(managerName: String) {
+    private enum CodingKeys: String, CodingKey {
+        case managerName
+        case telegramApiId
+        case telegramApiHash
+    }
+
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil) {
         self.managerName = managerName
+        self.telegramApiId = telegramApiId
+        self.telegramApiHash = telegramApiHash
     }
 
     required init(from decoder: Decoder) throws {
@@ -37,11 +53,15 @@ final class AppSettings: Codable {
         // decodeIfPresent (not decode) so adding a new field later can't
         // break loading an older settings.json that predates it.
         managerName = try container.decodeIfPresent(String.self, forKey: .managerName) ?? NSUserName()
+        telegramApiId = try container.decodeIfPresent(Int.self, forKey: .telegramApiId)
+        telegramApiHash = try container.decodeIfPresent(String.self, forKey: .telegramApiHash)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(managerName, forKey: .managerName)
+        try container.encode(telegramApiId, forKey: .telegramApiId)
+        try container.encode(telegramApiHash, forKey: .telegramApiHash)
     }
 
     private static func load() -> AppSettings {
