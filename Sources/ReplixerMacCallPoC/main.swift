@@ -104,6 +104,38 @@ if CommandLine.arguments.contains("--telegram-login-smoke-test") {
     RunLoop.main.run()
 }
 
+if CommandLine.arguments.contains("--telegram-list-chats-smoke-test") {
+    print("[\(timestamp())] Крок Phase 4.2 діагностика: список чатів Telegram (id + назва) — щоб зіставити чат з Windows-конфігурації (AppSecrets.cs) з реальним TDLib chat_id.")
+    Task {
+        await TelegramChatListSmokeTest.run()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+if CommandLine.arguments.contains("--telegram-send-test-message-smoke-test") {
+    print("[\(timestamp())] Крок Phase 4.2: тест відправки повідомлення в налаштований Telegram-чат/тему (перевірка targeting перед реальним аплоадом запису).")
+    Task {
+        await TelegramSendTestMessageSmokeTest.run()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--telegram-send-audio-smoke-test") {
+    guard CommandLine.arguments.count > flagIndex + 1 else {
+        print("[\(timestamp())] ❌ Вкажи шлях до аудіофайлу: --telegram-send-audio-smoke-test /шлях/до/файлу.m4a")
+        exit(0)
+    }
+    let filePath = CommandLine.arguments[flagIndex + 1]
+    print("[\(timestamp())] Крок Phase 4.2: тест відправки аудіофайлу в налаштований Telegram-чат/тему (\(filePath)).")
+    Task {
+        await TelegramSendAudioSmokeTest.run(filePath: filePath)
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--mic-smoke-test") {
     print("[\(timestamp())] Крок A (1.2): смоук-тест мікрофона.")
     // requestRecordPermission's completion is async (may land on any queue),

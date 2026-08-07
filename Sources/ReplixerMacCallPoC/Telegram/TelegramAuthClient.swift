@@ -16,13 +16,24 @@ import TDLibKit
 /// session at a time.
 final class TelegramAuthClient {
     private let manager = TDLibClientManager()
-    private var client: TDLibClient!
+    // Phase 4.2: private(set), not private — the chat-listing/send-message
+    // diagnostics need to reuse this same authenticated TDLibClient rather
+    // than spinning up (and re-authenticating) a fresh TelegramAuthClient
+    // per operation.
+    private(set) var client: TDLibClient!
     // Explicitly Swift.Error, not TDLibKit's own `Error` model struct (its
-    // representation of a TDLib API error) — `import TDLibKit` shadows the
+    // representation of a TDLib error) — `import TDLibKit` shadows the
     // bare `Error` name in this file, so every use of the throwing-error
     // protocol here has to be qualified or it silently resolves to the
     // wrong type and fails to compile.
     private var readyContinuation: CheckedContinuation<Void, Swift.Error>?
+    // Phase 4.2: TDLib pushes this once, shortly after authorization, as an
+    // `updateChatFolders` update — there is no request/response RPC to pull
+    // it on demand, so it has to be captured here as it flies by and cached
+    // for diagnostics (TelegramChatListSmokeTest) that need to enumerate
+    // chats living inside a folder (`.chatListFolder`), not just the main
+    // list.
+    private(set) var chatFolders: [ChatFolderInfo] = []
 
     private let databaseDirectory: URL = {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -62,24 +73,35 @@ final class TelegramAuthClient {
     }
 
     /// Runs on the client's own serial update-handler queue (per
-    /// `TDLibClientManager`) — decodes just enough to recognize
-    /// authorization-state updates and ignores everything else (messages,
-    /// chat updates, etc. — none of that exists yet in Phase 4.1). Actual
-    /// handling is dispatched into a `Task` so the (possibly
-    /// stdin-blocking) work in `advance(authorizationState:...)` doesn't
-    /// block this queue from delivering the *next* update once we reply.
+    /// `TDLibClientManager`) — recognizes authorization-state updates (Phase
+    /// 4.1) and chat-folders updates (Phase 4.2, see `chatFolders` above),
+    /// ignores everything else (messages, chat updates, etc. — none of that
+    /// exists yet). Authorization handling is dispatched into a `Task` so
+    /// the (possibly stdin-blocking) work in
+    /// `advance(authorizationState:...)` doesn't block this queue from
+    /// delivering the *next* update once we reply.
     private func route(data: Data, client: TDLibClient, apiId: Int, apiHash: String) {
-        guard let update = try? client.decoder.decode(Update.self, from: data),
-              case .updateAuthorizationState(let stateUpdate) = update else { return }
+        guard let update = try? client.decoder.decode(Update.self, from: data) else { return }
 
-        Task {
-            do {
-                try await advance(authorizationState: stateUpdate.authorizationState, client: client, apiId: apiId, apiHash: apiHash)
-            } catch {
-                print("[TelegramAuthClient] ❌ помилка авторизації: \(error)")
-                readyContinuation?.resume(throwing: error)
-                readyContinuation = nil
+        switch update {
+        case .updateAuthorizationState(let stateUpdate):
+            Task {
+                do {
+                    try await advance(authorizationState: stateUpdate.authorizationState, client: client, apiId: apiId, apiHash: apiHash)
+                } catch {
+                    print("[TelegramAuthClient] ❌ помилка авторизації: \(error)")
+                    readyContinuation?.resume(throwing: error)
+                    readyContinuation = nil
+                }
             }
+
+        case .updateChatFolders(let foldersUpdate):
+            chatFolders = foldersUpdate.chatFolders
+
+        default:
+            // Messages, chat updates, etc. — nothing for the login flow
+            // itself to react to (Phase 4.1/4.2 scope).
+            break
         }
     }
 

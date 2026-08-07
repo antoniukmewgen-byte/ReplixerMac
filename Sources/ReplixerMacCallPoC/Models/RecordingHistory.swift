@@ -23,7 +23,23 @@ final class RecordingHistory {
     private(set) var entries: [RecordingEntry]
 
     private init() {
-        entries = RecordingHistory.store.load() ?? []
+        switch RecordingHistory.store.load() {
+        case .decoded(let loaded):
+            entries = loaded
+        case .notFound:
+            entries = []
+        case .decodeFailed(let error):
+            // Unlike AppSettings.load(), there's no immediate saveNow()
+            // here to guard against — but starting from an empty array and
+            // letting a later addStarted()/markFinished() scheduleSave()
+            // silently overwrite a corrupt-but-recoverable recordings.json
+            // would still quietly destroy history. Surface it instead so a
+            // hand-edit mistake (or real corruption) gets fixed rather than
+            // paved over.
+            print("[RecordingHistory] ❌ не вдалося прочитати \(RecordingHistory.store.url.path): \(error)")
+            print("[RecordingHistory] ⚠️ Стартую з порожньою історією в пам'яті — файл на диску поки НЕ буде перезаписано, але зверни увагу, якщо це неочікувано.")
+            entries = []
+        }
     }
 
     /// JSON-level counterpart of `FileNaming.cleanupStalePartialFiles()`: any

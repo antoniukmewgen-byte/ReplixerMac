@@ -31,11 +31,30 @@ final class JSONStore<Value: Codable> {
     }
 
     /// Synchronous load — fine to call at startup before anything else is
-    /// running. Returns nil if the file doesn't exist yet or fails to
-    /// decode (e.g. first run, or a hand-edit that broke the JSON).
-    func load() -> Value? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Value.self, from: data)
+    /// running.
+    ///
+    /// Distinguishes "file doesn't exist yet" (`.notFound`, expected on
+    /// first run — safe to bootstrap defaults and write them) from "file
+    /// exists but failed to decode" (`.decodeFailed`, e.g. a hand-edit that
+    /// broke the JSON — must NOT be treated the same as `.notFound`, since
+    /// callers that bootstrap-and-save defaults on `.notFound` would
+    /// otherwise silently overwrite/destroy an existing file's data just
+    /// because one field had a typo).
+    func load() -> LoadResult {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .notFound }
+        do {
+            let data = try Data(contentsOf: url)
+            let value = try JSONDecoder().decode(Value.self, from: data)
+            return .decoded(value)
+        } catch {
+            return .decodeFailed(error)
+        }
+    }
+
+    enum LoadResult {
+        case notFound
+        case decoded(Value)
+        case decodeFailed(Swift.Error)
     }
 
     /// Schedules a debounced write 500ms out; a call before that fires
