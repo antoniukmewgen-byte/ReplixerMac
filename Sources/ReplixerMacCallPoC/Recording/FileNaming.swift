@@ -46,8 +46,20 @@ enum FileNaming {
     /// AudioMixerEncoder renames this to the real name only after a clean
     /// stop() (i.e. after the IOProc is torn down and the AVAudioFile has
     /// finalized its container).
+    ///
+    /// The `.inprogress` marker is inserted *before* the real extension
+    /// (`foo.inprogress.m4a`), not appended after it (`foo.m4a.inprogress`).
+    /// AVAudioFile infers the container format purely from the URL's last
+    /// path extension at creation time — writing to a URL whose last
+    /// extension is `.inprogress` silently produces the wrong container
+    /// (not proper MPEG-4), which then fails to open once simply renamed to
+    /// `.m4a`, even though every sample was written successfully. Keeping
+    /// `.m4a` as the actual last extension throughout recording avoids that.
     static func partialURL(for finalURL: URL) -> URL {
-        finalURL.appendingPathExtension("inprogress")
+        let ext = finalURL.pathExtension
+        return finalURL.deletingPathExtension()
+            .appendingPathExtension("inprogress")
+            .appendingPathExtension(ext)
     }
 
     /// Removes any leftover `.inprogress` files in the recordings directory —
@@ -61,7 +73,7 @@ enum FileNaming {
             at: recordingsDirectory, includingPropertiesForKeys: nil
         ) else { return }
 
-        for url in entries where url.pathExtension == "inprogress" {
+        for url in entries where url.deletingPathExtension().pathExtension == "inprogress" {
             do {
                 try FileManager.default.removeItem(at: url)
                 print("[FileNaming] 🧹 видалив застарілий незавершений запис: \(url.lastPathComponent)")

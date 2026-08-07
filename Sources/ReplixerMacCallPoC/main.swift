@@ -106,4 +106,22 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 sigtermSource.setEventHandler { handleShutdownSignal("SIGTERM") }
 sigtermSource.resume()
 
+// Testing aid only: Xcode's Run console doesn't forward Ctrl+C as a real
+// SIGINT the way a Terminal window does (there's no TTY behind it), so
+// there'd be no way to exercise the graceful-shutdown path while running
+// from Xcode. As a stand-in, listen for a line typed into the Xcode
+// console — `q` + Enter — and route it through the exact same shutdown
+// path as SIGINT/SIGTERM. Harmless when run from a real Terminal too,
+// since Ctrl+C there triggers SIGINT directly and this just sits idle
+// waiting on stdin.
+DispatchQueue.global(qos: .userInitiated).async {
+    print("[\(timestamp())] (тест) введи 'q' + Enter у консолі Xcode, щоб коректно завершити роботу без SIGINT.")
+    while let line = readLine() {
+        if line.trimmingCharacters(in: .whitespaces).lowercased() == "q" {
+            handleShutdownSignal("клавіатура (q)")
+            break
+        }
+    }
+}
+
 RunLoop.main.run()
