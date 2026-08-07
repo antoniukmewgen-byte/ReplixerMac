@@ -1,0 +1,73 @@
+import Foundation
+
+/// Builds Windows-parity recording file names and resolves the save
+/// directory. Naming scheme: {Manager}_{Platform}_{yy.MM.dd}_{HH.mm}, with a
+/// _{ss} suffix appended only if that exact name already exists (collision)
+/// — mirrors Replixer's Windows naming scheme.
+///
+/// `Manager` has no settings-backed value yet (that's Phase 2) — using the
+/// macOS account name (`NSUserName()`) as a placeholder, since it's the
+/// closest available stand-in for "whoever is using this Mac" until real
+/// settings exist.
+enum FileNaming {
+    static var recordingsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ReplixerMac", isDirectory: true)
+            .appendingPathComponent("Recordings", isDirectory: true)
+    }
+
+    static func ensureRecordingsDirectoryExists() throws {
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+    }
+
+    /// Returns a fresh, non-colliding URL under `recordingsDirectory` for a
+    /// new recording. `date` and `manager` are parameters (not just defaults)
+    /// so tests/other callers can pin them deterministically.
+    static func recordingURL(platform: String, date: Date = Date(), manager: String = NSUserName()) -> URL {
+        let minuteFormatter = DateFormatter()
+        minuteFormatter.dateFormat = "yy.MM.dd_HH.mm"
+        let base = "\(manager)_\(platform)_\(minuteFormatter.string(from: date))"
+
+        let directory = recordingsDirectory
+        let candidate = directory.appendingPathComponent("\(base).m4a")
+        if !FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+
+        let secondsFormatter = DateFormatter()
+        secondsFormatter.dateFormat = "ss"
+        let withSeconds = "\(base)_\(secondsFormatter.string(from: date))"
+        return directory.appendingPathComponent("\(withSeconds).m4a")
+    }
+
+    /// Sibling path used while a recording is still in progress — deliberately
+    /// distinct from the final name so an interrupted recording (crash,
+    /// force-quit, `kill -9`) is never mistaken for a complete, playable file.
+    /// AudioMixerEncoder renames this to the real name only after a clean
+    /// stop() (i.e. after the IOProc is torn down and the AVAudioFile has
+    /// finalized its container).
+    static func partialURL(for finalURL: URL) -> URL {
+        finalURL.appendingPathExtension("inprogress")
+    }
+
+    /// Removes any leftover `.inprogress` files in the recordings directory —
+    /// remnants of a recording that was interrupted before AudioMixerEncoder
+    /// could rename it to its final name. Mirrors the Windows
+    /// CleanupStaleTempFiles behavior. Safe to call unconditionally at
+    /// startup: an `.inprogress` file is by definition never a properly
+    /// finalized recording, so there's nothing worth salvaging from it.
+    static func cleanupStalePartialFiles() {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: recordingsDirectory, includingPropertiesForKeys: nil
+        ) else { return }
+
+        for url in entries where url.pathExtension == "inprogress" {
+            do {
+                try FileManager.default.removeItem(at: url)
+                print("[FileNaming] 🧹 видалив застарілий незавершений запис: \(url.lastPathComponent)")
+            } catch {
+                print("[FileNaming] ⚠️ не вдалося видалити \(url.lastPathComponent): \(error)")
+            }
+        }
+    }
+}
