@@ -14,6 +14,10 @@ import Foundation
 /// now avoids having to retrofit one later).
 actor CallRecordingCoordinator {
     private var isRecording = false
+    // Phase 2.2: tracks the RecordingHistory entry for the call currently
+    // being recorded, so callEnded/shutdown can update its status (saved
+    // vs error) without needing to search the history by e.g. start time.
+    private var currentEntryID: UUID?
 
     func callStarted(processName: String) {
         guard !isRecording else {
@@ -33,13 +37,15 @@ actor CallRecordingCoordinator {
             return
         }
 
-        let outputURL = FileNaming.recordingURL(platform: "Telegram")
+        let platform = "Telegram"
+        let outputURL = FileNaming.recordingURL(platform: platform)
         guard AudioMixerEncoder.start(processObjectID: processObjectID, outputURL: outputURL) else {
             print("[CallRecordingCoordinator] ❌ не вдалося почати запис.")
             return
         }
 
         isRecording = true
+        currentEntryID = RecordingHistory.shared.addStarted(platform: platform)
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
     }
 
@@ -49,8 +55,7 @@ actor CallRecordingCoordinator {
             return
         }
 
-        AudioMixerEncoder.stop()
-        isRecording = false
+        finishRecording()
         print("[CallRecordingCoordinator] ⏹️ запис зупинено.")
     }
 
@@ -63,7 +68,22 @@ actor CallRecordingCoordinator {
     func shutdown() {
         guard isRecording else { return }
         print("[CallRecordingCoordinator] 🛑 завершення роботи під час активного запису — коректно зупиняю...")
-        AudioMixerEncoder.stop()
+        finishRecording()
+    }
+
+    /// Shared by callEnded/shutdown: stops the encoder, records the outcome
+    /// (saved vs error) in RecordingHistory, and resets state either way —
+    /// a failed stop() shouldn't leave `isRecording` stuck true.
+    private func finishRecording() {
+        let finalURL = AudioMixerEncoder.stop()
+        if let currentEntryID {
+            if let finalURL {
+                RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
+            } else {
+                RecordingHistory.shared.markFailed(id: currentEntryID)
+            }
+        }
+        currentEntryID = nil
         isRecording = false
     }
 }

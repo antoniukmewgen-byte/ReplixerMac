@@ -70,8 +70,13 @@ enum AudioMixerEncoder {
     /// rather than silently losing the recording; it'll show up for manual
     /// recovery instead of being swept by the next stale-file cleanup pass
     /// only after enough time to notice.
-    static func stop() {
-        guard isActive else { return }
+    ///
+    /// Returns the final URL on a successful rename, nil otherwise (nothing
+    /// was active, or the rename failed) — Phase 2.2's CallRecordingCoordinator
+    /// uses this to record the recording as `.saved` vs `.error` in history.
+    @discardableResult
+    static func stop() -> URL? {
+        guard isActive else { return nil }
 
         if let ioProcID, let aggregateDeviceID {
             AudioDeviceStop(aggregateDeviceID, ioProcID)
@@ -84,10 +89,12 @@ enum AudioMixerEncoder {
             AudioHardwareDestroyProcessTap(tapID)
         }
 
+        var renamedURL: URL?
         if let partialOutputURL, let finalOutputURL {
             do {
                 try FileManager.default.moveItem(at: partialOutputURL, to: finalOutputURL)
                 print("[AudioMixerEncoder] ✅ файл готовий: \(finalOutputURL.path)")
+                renamedURL = finalOutputURL
             } catch {
                 print("[AudioMixerEncoder] ⚠️ не вдалося перейменувати \(partialOutputURL.lastPathComponent) -> \(finalOutputURL.lastPathComponent): \(error)")
             }
@@ -99,6 +106,7 @@ enum AudioMixerEncoder {
         finalOutputURL = nil
         partialOutputURL = nil
         isActive = false
+        return renamedURL
     }
 
     /// Step 1.4 smoke-test entry point (`--mix-smoke-test`): start, sleep for

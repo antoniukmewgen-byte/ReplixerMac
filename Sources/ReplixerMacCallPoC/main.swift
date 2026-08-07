@@ -14,6 +14,19 @@ FileNaming.cleanupStalePartialFiles()
 // hand-editing settings.json has an obvious way to confirm it took effect.
 print("[\(timestamp())] Налаштування: manager=\"\(AppSettings.shared.managerName)\" (файл: \(AppSettings.store.url.path))")
 
+// Phase 2.2: log how many past recordings are already known, so a fresh
+// run makes it obvious whether recordings.json loaded correctly.
+print("[\(timestamp())] Історія записів: \(RecordingHistory.shared.entries.count) запис(ів) у \(RecordingHistory.store.url.path)")
+
+// Phase 2.2 (fix): JSON-level counterpart of the .inprogress file sweep
+// above — reconcile any entry left in `.recording` status by a crash/
+// `kill -9` on a previous run to `.error`, so it doesn't sit there looking
+// like a call that's still going, forever.
+let reconciledCount = RecordingHistory.shared.reconcileDanglingRecordings()
+if reconciledCount > 0 {
+    print("[\(timestamp())] ⚠️ Знайдено \(reconciledCount) запис(ів) історії, залишених у статусі \"recording\" після аварійного завершення — позначено як \"error\".")
+}
+
 if CommandLine.arguments.contains("--tap-smoke-test") {
     print("[\(timestamp())] Крок B: смоук-тест ProcessTap. Шукаю процес Telegram у CoreAudio HAL...")
     if let objectID = ProcessTapSmokeTest.findTelegramProcessObjectID() {
@@ -99,10 +112,12 @@ func handleShutdownSignal(_ signalName: String) {
     print("[\(timestamp())] Отримано \(signalName) — коректно завершую (зупиняю активний запис, якщо є)...")
     Task {
         await coordinator.shutdown()
-        // Phase 2.1: flush any debounced-but-not-yet-written settings
-        // change before exiting, same reasoning as the recording's clean
-        // stop() above — don't let a pending write get lost to shutdown.
+        // Phase 2.1/2.2: flush any debounced-but-not-yet-written settings
+        // or history changes before exiting, same reasoning as the
+        // recording's clean stop() above — don't let a pending write get
+        // lost to shutdown.
         AppSettings.shared.flush()
+        RecordingHistory.shared.flush()
         exit(0)
     }
 }
