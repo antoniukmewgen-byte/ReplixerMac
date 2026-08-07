@@ -77,6 +77,12 @@ if CommandLine.arguments.contains("--mix-smoke-test") {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--list-audio-processes-smoke-test") {
+    print("[\(timestamp())] Крок Phase 3 діагностика: список CoreAudio-процесів з активним input/output.")
+    AudioProcessListSmokeTest.run()
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--mic-smoke-test") {
     print("[\(timestamp())] Крок A (1.2): смоук-тест мікрофона.")
     // requestRecordPermission's completion is async (may land on any queue),
@@ -86,17 +92,18 @@ if CommandLine.arguments.contains("--mic-smoke-test") {
     RunLoop.main.run()
 }
 
-print("[\(timestamp())] Слухаю дзвінки Telegram... (Ctrl+C для виходу)")
+let watchedMessengers = SupportedMessenger.allCases.map(\.rawValue).joined(separator: ", ")
+print("[\(timestamp())] Слухаю дзвінки (\(watchedMessengers))... (Ctrl+C для виходу)")
 
 let coordinator = CallRecordingCoordinator()
-let monitor = TelegramCallMonitor()
-monitor.onCallStarted = { name in
-    print("[\(timestamp())] 📞 Дзвінок почався — \(name)")
-    Task { await coordinator.callStarted(processName: name) }
+let monitor = CallMonitor()
+monitor.onCallStarted = { messenger, name in
+    print("[\(timestamp())] 📞 Дзвінок почався — \(messenger.rawValue) (\(name))")
+    Task { await coordinator.callStarted(messenger: messenger, processName: name) }
 }
-monitor.onCallEnded = { name in
-    print("[\(timestamp())] 🔚 Дзвінок закінчився — \(name)")
-    Task { await coordinator.callEnded(processName: name) }
+monitor.onCallEnded = { messenger, name in
+    print("[\(timestamp())] 🔚 Дзвінок закінчився — \(messenger.rawValue) (\(name))")
+    Task { await coordinator.callEnded(messenger: messenger, processName: name) }
 }
 monitor.start()
 

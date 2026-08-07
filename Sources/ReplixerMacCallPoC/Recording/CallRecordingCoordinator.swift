@@ -1,17 +1,17 @@
 import CoreAudio
 import Foundation
 
-/// Bridges TelegramCallMonitor's start/end events to AudioMixerEncoder's
-/// capture pipeline: resolves the Telegram process object fresh at call
+/// Bridges CallMonitor's start/end events to AudioMixerEncoder's capture
+/// pipeline: resolves the matched messenger's process object fresh at call
 /// start (its AudioObjectID isn't guaranteed stable across separate calls),
 /// builds a Windows-parity output path via FileNaming, and starts/stops
 /// recording.
 ///
 /// An actor, not a class with manual flags — Swift serializes calls to an
 /// actor's methods automatically, so a rapid call-start/call-end flicker
-/// from TelegramCallMonitor can't race into a double-start or double-stop
-/// (the exact hazard the plan calls out for Phase 1.6; building on an actor
-/// now avoids having to retrofit one later).
+/// from CallMonitor can't race into a double-start or double-stop (the
+/// exact hazard the plan calls out for Phase 1.6; building on an actor now
+/// avoids having to retrofit one later).
 actor CallRecordingCoordinator {
     private var isRecording = false
     // Phase 2.2: tracks the RecordingHistory entry for the call currently
@@ -19,14 +19,14 @@ actor CallRecordingCoordinator {
     // vs error) without needing to search the history by e.g. start time.
     private var currentEntryID: UUID?
 
-    func callStarted(processName: String) {
+    func callStarted(messenger: SupportedMessenger, processName: String) {
         guard !isRecording else {
             print("[CallRecordingCoordinator] ⚠️ дзвінок вже записується, ігнорую повторний onCallStarted.")
             return
         }
 
-        guard let processObjectID = ProcessTapSmokeTest.findTelegramProcessObjectID() else {
-            print("[CallRecordingCoordinator] ❌ не знайшов Telegram у CoreAudio-процесах на старті дзвінка.")
+        guard let processObjectID = ProcessTapSmokeTest.findProcessObjectID(for: messenger) else {
+            print("[CallRecordingCoordinator] ❌ не знайшов \(messenger.rawValue) у CoreAudio-процесах на старті дзвінка.")
             return
         }
 
@@ -37,7 +37,7 @@ actor CallRecordingCoordinator {
             return
         }
 
-        let platform = "Telegram"
+        let platform = messenger.rawValue
         let outputURL = FileNaming.recordingURL(platform: platform)
         guard AudioMixerEncoder.start(processObjectID: processObjectID, outputURL: outputURL) else {
             print("[CallRecordingCoordinator] ❌ не вдалося почати запис.")
@@ -49,7 +49,7 @@ actor CallRecordingCoordinator {
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
     }
 
-    func callEnded(processName: String) {
+    func callEnded(messenger: SupportedMessenger, processName: String) {
         guard isRecording else {
             print("[CallRecordingCoordinator] ⚠️ onCallEnded без активного запису — ігнорую.")
             return

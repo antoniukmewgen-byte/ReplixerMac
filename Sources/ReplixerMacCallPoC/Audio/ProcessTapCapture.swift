@@ -10,6 +10,17 @@ import Foundation
 /// top of it.
 enum ProcessTapSmokeTest {
     static func findTelegramProcessObjectID() -> AudioObjectID? {
+        findProcessObjectID(for: .telegram)
+    }
+
+    /// Phase 3: generalized version of the above, used by
+    /// `CallRecordingCoordinator` for all supported messengers, not just
+    /// Telegram. Re-scans the CoreAudio HAL process list rather than
+    /// reusing any AudioObjectID `CallMonitor` might have seen during
+    /// polling — a process object's AudioObjectID isn't guaranteed stable
+    /// across separate calls, so it's always re-resolved fresh at the
+    /// moment a call actually starts.
+    static func findProcessObjectID(for messenger: SupportedMessenger) -> AudioObjectID? {
         let processIDs: [AudioObjectID] = CAObject.readArray(
             AudioObjectID(kAudioObjectSystemObject),
             .processObjectList
@@ -19,7 +30,7 @@ enum ProcessTapSmokeTest {
             guard let pid: pid_t = CAObject.read(objectID, .processPID) else { continue }
             guard let app = NSRunningApplication(processIdentifier: pid) else { continue }
             let name = app.localizedName ?? app.bundleIdentifier ?? ""
-            if name.contains("Telegram") { return objectID }
+            if name.localizedCaseInsensitiveContains(messenger.rawValue) { return objectID }
         }
         return nil
     }
