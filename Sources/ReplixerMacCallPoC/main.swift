@@ -9,6 +9,11 @@ func timestamp() -> String { formatter.string(from: Date()) }
 // or force-quit during a previous run, before doing anything else.
 FileNaming.cleanupStalePartialFiles()
 
+// Phase 2.1: load (or bootstrap, on first run) persisted settings. No UI to
+// edit these yet (Phase 7) — logging the resolved value + file path here so
+// hand-editing settings.json has an obvious way to confirm it took effect.
+print("[\(timestamp())] Налаштування: manager=\"\(AppSettings.shared.managerName)\" (файл: \(AppSettings.store.url.path))")
+
 if CommandLine.arguments.contains("--tap-smoke-test") {
     print("[\(timestamp())] Крок B: смоук-тест ProcessTap. Шукаю процес Telegram у CoreAudio HAL...")
     if let objectID = ProcessTapSmokeTest.findTelegramProcessObjectID() {
@@ -94,6 +99,10 @@ func handleShutdownSignal(_ signalName: String) {
     print("[\(timestamp())] Отримано \(signalName) — коректно завершую (зупиняю активний запис, якщо є)...")
     Task {
         await coordinator.shutdown()
+        // Phase 2.1: flush any debounced-but-not-yet-written settings
+        // change before exiting, same reasoning as the recording's clean
+        // stop() above — don't let a pending write get lost to shutdown.
+        AppSettings.shared.flush()
         exit(0)
     }
 }

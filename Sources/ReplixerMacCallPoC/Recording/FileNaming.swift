@@ -23,7 +23,11 @@ enum FileNaming {
     /// Returns a fresh, non-colliding URL under `recordingsDirectory` for a
     /// new recording. `date` and `manager` are parameters (not just defaults)
     /// so tests/other callers can pin them deterministically.
-    static func recordingURL(platform: String, date: Date = Date(), manager: String = NSUserName()) -> URL {
+    ///
+    /// `manager` defaults to `AppSettings.shared.managerName` (Phase 2.1) —
+    /// itself defaulted to `NSUserName()` until a settings UI exists
+    /// (Phase 7) to change it to something else.
+    static func recordingURL(platform: String, date: Date = Date(), manager: String = AppSettings.shared.managerName) -> URL {
         let minuteFormatter = DateFormatter()
         minuteFormatter.dateFormat = "yy.MM.dd_HH.mm"
         let base = "\(manager)_\(platform)_\(minuteFormatter.string(from: date))"
