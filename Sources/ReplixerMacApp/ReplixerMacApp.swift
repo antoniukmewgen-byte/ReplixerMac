@@ -4,9 +4,8 @@ import SwiftUI
 struct ReplixerMacApp: App {
     var body: some Scene {
         WindowGroup {
-            Text("Hello, ReplixerMac")
-                .padding()
-                .frame(width: 400, height: 300)
+            ContentView()
+                .frame(minWidth: 700, minHeight: 450)
         }
     }
 }
