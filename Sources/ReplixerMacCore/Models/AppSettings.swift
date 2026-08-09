@@ -77,6 +77,16 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 7.7: gates whether `SetupWizardView` shows on launch. Windows-
+    // parity source: `AppSettings.IsSetupComplete`, but mac's wizard is
+    // scoped down to just confirming `managerName` (see that view's doc
+    // comment for why Position/Kommo/Sheets/the Telegram chat-picker don't
+    // carry over) — completing it just means "the welcome screen has been
+    // dismissed once", not "every integration is configured".
+    public var isSetupComplete: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
@@ -85,9 +95,10 @@ public final class AppSettings: Codable {
         case telegramTopicId
         case googleServiceAccountPath
         case googleDriveFolderId
+        case isSetupComplete
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil) {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false) {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
@@ -95,6 +106,7 @@ public final class AppSettings: Codable {
         self.telegramTopicId = telegramTopicId
         self.googleServiceAccountPath = googleServiceAccountPath
         self.googleDriveFolderId = googleDriveFolderId
+        self.isSetupComplete = isSetupComplete
     }
 
     public required init(from decoder: Decoder) throws {
@@ -108,6 +120,14 @@ public final class AppSettings: Codable {
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
         googleServiceAccountPath = try container.decodeIfPresent(String.self, forKey: .googleServiceAccountPath)
         googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
+        // Missing key means this settings.json predates Phase 7.7 — true
+        // "fresh install" (the file was just bootstrapped, nothing
+        // configured yet) should still show the wizard, but an existing
+        // dev/test install that already has Telegram or Drive wired up
+        // clearly already went through informal "setup"; don't make it
+        // re-click through a welcome screen it has no memory of skipping.
+        isSetupComplete = try container.decodeIfPresent(Bool.self, forKey: .isSetupComplete)
+            ?? (telegramApiId != nil || googleDriveFolderId != nil)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -119,6 +139,7 @@ public final class AppSettings: Codable {
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
         try container.encode(googleServiceAccountPath, forKey: .googleServiceAccountPath)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
+        try container.encode(isSetupComplete, forKey: .isSetupComplete)
     }
 
     private static func load() -> AppSettings {
