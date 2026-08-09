@@ -29,13 +29,13 @@ public final class AppSettings: Codable {
 
     // Phase 4: my.telegram.org app credentials, required by
     // setTdlibParameters before TDLib will do anything. Unlike managerName,
-    // these have no sane default — nil until hand-edited into settings.json
-    // (same "no UI yet, edit the JSON" pattern as managerName), and
+    // these have no sane default — nil until set. Public since Phase 7.6
+    // (ProfileView's Telegram section is the first real UI for these);
     // TelegramAuthClient refuses to start login without both present.
-    var telegramApiId: Int? {
+    public var telegramApiId: Int? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
-    var telegramApiHash: String? {
+    public var telegramApiHash: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -43,19 +43,18 @@ public final class AppSettings: Codable {
     // within it) recordings get sent to. Windows' equivalent
     // (`AppSettings.TelegramChatId`/`TelegramTopicId`) is populated by
     // picking from a hardcoded `AppSecrets.TelegramChats` list in a setup
-    // wizard ComboBox (gated by the user's `Position`) — that picker is
-    // Phase 7 scope here. Until then, same "no UI yet, hand-edit
-    // settings.json" pattern as telegramApiId/telegramApiHash above: set
-    // telegramChatId to one of TDLib's own chat ids (note these are NOT the
-    // same integers as Windows' AppSecrets.cs — TDLib prefixes
-    // supergroup/channel ids with "-100"; use
-    // `--telegram-list-chats-smoke-test` to read off the real value for a
-    // given chat name). telegramTopicId is Int (not Int64) to match
-    // TDLib's `MessageTopicForum.forumTopicId: Int`.
-    var telegramChatId: Int64? {
+    // wizard ComboBox (gated by the user's `Position`) — that picker is a
+    // later phase here (ProfileView's Phase 7.6 fields are plain numeric
+    // text entry, not a chat picker yet). Set telegramChatId to one of
+    // TDLib's own chat ids (note these are NOT the same integers as
+    // Windows' AppSecrets.cs — TDLib prefixes supergroup/channel ids with
+    // "-100"; use `--telegram-list-chats-smoke-test` to read off the real
+    // value for a given chat name). telegramTopicId is Int (not Int64) to
+    // match TDLib's `MessageTopicForum.forumTopicId: Int`.
+    public var telegramChatId: Int64? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
-    var telegramTopicId: Int? {
+    public var telegramTopicId: Int? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -66,14 +65,15 @@ public final class AppSettings: Codable {
     // deliberate, to avoid repeating the telegramApiHash null-wipe incident
     // (a multi-hundred-character PEM-embedded JSON string is extremely easy
     // to mis-quote/escape by hand). Point this at wherever the
-    // Google-provided `service_account.json` was saved.
-    var googleServiceAccountPath: String? {
+    // Google-provided `service_account.json` was saved. Public since Phase
+    // 7.6 (ProfileView's Google Drive section, with a file picker for this).
+    public var googleServiceAccountPath: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
     // Destination Drive folder id (the part of the folder's URL after
-    // `folders/`) recordings get uploaded into. Same "no UI yet, hand-edit
-    // settings.json" pattern as the Telegram fields above.
-    var googleDriveFolderId: String? {
+    // `folders/`) recordings get uploaded into. Public since Phase 7.6, same
+    // as googleServiceAccountPath above.
+    public var googleDriveFolderId: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 

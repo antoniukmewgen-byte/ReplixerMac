@@ -55,11 +55,31 @@ public final class TelegramAuthClient {
     // real id instead of trusting `sendMessage`'s return value directly.
     private var pendingSendResolutions: [Int64: CheckedContinuation<Int64, Never>] = [:]
 
-    private let databaseDirectory: URL = {
+    // static, not instance — it depends on nothing instance-specific, and
+    // Phase 7.6's `hasSavedSession` needs to read it without spinning up a
+    // full `TelegramAuthClient` (constructing one starts pulling in
+    // `TDLibClientManager` machinery this check has no reason to touch).
+    private static let databaseDirectory: URL = {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ReplixerMac", isDirectory: true)
             .appendingPathComponent("TDLib", isDirectory: true)
     }()
+
+    /// Non-interactive, instant, filesystem-only check for whether a TDLib
+    /// session database already exists on disk — Phase 7.6's Profile screen
+    /// uses this to show a safe "сесія збережена" indicator instead of a
+    /// "Перевірити з'єднання" button wired to `login()`. `login()` resumes
+    /// silently when a session is already saved, but prompts (blocking on
+    /// `readLine()`, see that method's and `promptLine`'s doc comments) when
+    /// it isn't — a real risk for a button in a double-clicked `.app` with
+    /// no console attached. This can't tell whether a saved session is still
+    /// *valid* (Telegram could have revoked it server-side), only whether
+    /// the on-disk signal `login()` itself relies on is present; it's a
+    /// best-effort status readout, not a connection test.
+    public static var hasSavedSession: Bool {
+        let contents = try? FileManager.default.contentsOfDirectory(atPath: databaseDirectory.path)
+        return !(contents?.isEmpty ?? true)
+    }
 
     /// Starts the login flow (or, if a session already exists on disk,
     /// resumes it silently) and suspends until `authorizationStateReady` is
@@ -73,7 +93,7 @@ public final class TelegramAuthClient {
             throw TelegramAuthError.missingCredentials
         }
 
-        try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: Self.databaseDirectory, withIntermediateDirectories: true)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Swift.Error>) in
             self.readyContinuation = continuation
@@ -151,7 +171,7 @@ public final class TelegramAuthClient {
                 apiHash: apiHash,
                 apiId: apiId,
                 applicationVersion: "1.0",
-                databaseDirectory: databaseDirectory.path,
+                databaseDirectory: Self.databaseDirectory.path,
                 databaseEncryptionKey: TelegramKeychain.databaseEncryptionKey(),
                 deviceModel: "Mac",
                 filesDirectory: nil,

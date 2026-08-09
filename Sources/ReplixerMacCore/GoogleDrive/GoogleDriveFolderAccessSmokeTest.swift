@@ -5,40 +5,66 @@ import Foundation
 /// auth (JWT sign + token exchange, `GoogleServiceAccountAuth`) and Drive
 /// folder access both work end to end against the real Drive API, as the
 /// first checkpoint before any upload code exists (Step 5.2).
+///
+/// `run()` is the original CLI form (`--gdrive-folder-access-smoke-test`),
+/// printing progress as it goes. Phase 7.6 needs the same check from
+/// Profile's "Перевірити з'єднання" button, but a UI button can't usefully
+/// consume stdout — `check()` is that same logic reshaped to return one
+/// final result instead, with `run()` now just printing whatever `check()`
+/// comes back with so the two never drift apart.
 public enum GoogleDriveFolderAccessSmokeTest {
+    /// Stand-in for `Swift.Result<String, String>` — the stdlib `Result`
+    /// requires its `Failure` type to conform to `Error`, which a plain
+    /// `String` doesn't, so a bare `Result<String, String>` return type
+    /// fails to compile. Every failure mode here is just a Ukrainian
+    /// message meant for direct display, not a typed error to catch/match
+    /// on, so a two-case enum is a better fit than wrapping the message in
+    /// a throwaway `Error` conformance just to keep using `Result`.
+    public enum CheckOutcome {
+        case success(String)
+        case failure(String)
+    }
+
     public static func run() async {
+        switch await check() {
+        case .success(let message):
+            print("[\(timestamp())] ✅ \(message)")
+        case .failure(let message):
+            print("[\(timestamp())] ❌ \(message)")
+        }
+    }
+
+    /// Non-interactive (no stdin involved anywhere in this call chain,
+    /// unlike `TelegramAuthClient.login()`) — safe to wire directly to a UI
+    /// button. Returns a human-readable Ukrainian message on either side
+    /// rather than throwing, since the caller (a button handler) wants to
+    /// display *something* for every failure mode, not just the ones it
+    /// happened to anticipate.
+    public static func check() async -> CheckOutcome {
         guard let folderId = AppSettings.shared.googleDriveFolderId else {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
-            return
+            return .failure("У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
         }
 
-        print("[\(timestamp())] Отримую access token через service account...")
         let accessToken: String
         do {
             accessToken = try await GoogleServiceAccountAuth.fetchAccessToken()
         } catch GoogleServiceAccountAuth.AuthError.missingSettings {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleServiceAccountPath.")
-            return
+            return .failure("У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleServiceAccountPath.")
         } catch GoogleServiceAccountAuth.AuthError.fileNotFound(let path) {
-            print("[\(timestamp())] ❌ Файл service account не знайдено: \(path)")
-            return
+            return .failure("Файл service account не знайдено: \(path)")
         } catch {
-            print("[\(timestamp())] ❌ Не вдалося отримати access token: \(error)")
-            return
+            return .failure("Не вдалося отримати access token: \(error)")
         }
-        print("[\(timestamp())] ✅ access token отримано.")
 
         guard var components = URLComponents(string: "https://www.googleapis.com/drive/v3/files/\(folderId)") else {
-            print("[\(timestamp())] ❌ Некоректний googleDriveFolderId: \(folderId)")
-            return
+            return .failure("Некоректний googleDriveFolderId: \(folderId)")
         }
         components.queryItems = [
             URLQueryItem(name: "fields", value: "id,name,mimeType"),
             URLQueryItem(name: "supportsAllDrives", value: "true")
         ]
         guard let url = components.url else {
-            print("[\(timestamp())] ❌ Не вдалося зібрати URL запиту до Drive API.")
-            return
+            return .failure("Не вдалося зібрати URL запиту до Drive API.")
         }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -47,16 +73,15 @@ public enum GoogleDriveFolderAccessSmokeTest {
             let (data, response) = try await URLSession.shared.data(for: request)
             let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
             guard let http = response as? HTTPURLResponse else {
-                print("[\(timestamp())] ❌ Неочікувана відповідь без HTTP статусу.")
-                return
+                return .failure("Неочікувана відповідь без HTTP статусу.")
             }
             if (200...299).contains(http.statusCode) {
-                print("[\(timestamp())] ✅ Доступ до теки Drive підтверджено: \(bodyText)")
+                return .success("Доступ до теки Drive підтверджено: \(bodyText)")
             } else {
-                print("[\(timestamp())] ❌ Drive API повернув статус \(http.statusCode): \(bodyText)")
+                return .failure("Drive API повернув статус \(http.statusCode): \(bodyText)")
             }
         } catch {
-            print("[\(timestamp())] ❌ Запит до Drive API провалився: \(error)")
+            return .failure("Запит до Drive API провалився: \(error)")
         }
     }
 }
