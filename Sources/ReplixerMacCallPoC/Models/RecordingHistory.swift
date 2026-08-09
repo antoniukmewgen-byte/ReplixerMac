@@ -101,6 +101,47 @@ final class RecordingHistory {
         RecordingHistory.store.scheduleSave(entries)
     }
 
+    /// Phase 6: records the outcome of an upload attempt (initial or
+    /// retried) for `id`. Takes the full final state rather than optional
+    /// "only touch what changed" params — `UploadOrchestrator.Result`
+    /// always carries the definitive value for each field (an
+    /// already-succeeded step it was told to skip comes back unchanged, not
+    /// nil), so there's never a need to distinguish "don't touch" from
+    /// "set to nil/false" here.
+    func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[index].driveUrl = driveUrl
+        entries[index].driveFailed = driveFailed
+        entries[index].telegramMessageId = telegramMessageId
+        entries[index].telegramFailed = telegramFailed
+        RecordingHistory.store.scheduleSave(entries)
+    }
+
+    /// Phase 6: snapshot of entries whose last upload attempt left
+    /// something unfinished, atomically marked `isBackgroundRetrying` in
+    /// the same pass — mirrors Windows PendingUploadRetryService's
+    /// candidates-then-mark-in-one-step approach, so a slow retry tick and
+    /// a hypothetical future manual "retry now" action can't both grab the
+    /// same entry. `isBackgroundRetrying` isn't persisted (see
+    /// RecordingEntry), so no save is scheduled here.
+    func beginRetryCandidates() -> [RecordingEntry] {
+        var candidates: [RecordingEntry] = []
+        for index in entries.indices where entries[index].needsBackgroundRetry && !entries[index].isBackgroundRetrying {
+            entries[index].isBackgroundRetrying = true
+            candidates.append(entries[index])
+        }
+        return candidates
+    }
+
+    /// Releases the in-progress flag `beginRetryCandidates` set, regardless
+    /// of whether the retry succeeded — call in every code path (success,
+    /// partial success, or the entry's file having vanished) so an entry
+    /// can never get stuck permanently skipped.
+    func endBackgroundRetry(id: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[index].isBackgroundRetrying = false
+    }
+
     /// Forces any pending debounced save to happen immediately — call
     /// before process exit, same reasoning as AppSettings.flush().
     func flush() {

@@ -1,6 +1,5 @@
 import CoreAudio
 import Foundation
-import TDLibKit
 
 /// Bridges CallMonitor's start/end events to AudioMixerEncoder's capture
 /// pipeline: resolves the matched messenger's process object fresh at call
@@ -40,7 +39,10 @@ actor CallRecordingCoordinator {
     // as the dangling-recording gap noted in RecordingHistory.addStarted).
     // Phase 5.3: now covers both the Drive and Telegram legs (they run
     // sequentially inside the same Task — see uploadRecording), not just
-    // Telegram alone.
+    // Telegram alone. Phase 6: any step this task's upload leaves failed
+    // just gets picked up later by PendingUploadRetryService's
+    // retryPendingUploads() calls, so shutdown() still only needs to wait
+    // for this one task, not for retries to exhaust themselves too.
     private var pendingUploadTask: Task<Void, Never>?
 
     func callStarted(messenger: SupportedMessenger, processName: String) {
@@ -117,8 +119,12 @@ actor CallRecordingCoordinator {
                 // subsequent call isn't wrongly rejected by the `isRecording`
                 // guard while a slow upload is still running. shutdown()
                 // drains this task before closing the TDLib client.
+                // Captured explicitly (not read back from `self` inside the
+                // Task) because `currentEntryID` gets reset to nil right
+                // below, before the Task body ever runs.
+                let entryID = currentEntryID
                 pendingUploadTask = Task { [weak self] in
-                    await self?.uploadRecording(fileURL: finalURL)
+                    await self?.uploadRecording(fileURL: finalURL, entryID: entryID)
                 }
             } else {
                 RecordingHistory.shared.markFailed(id: currentEntryID)
@@ -128,79 +134,103 @@ actor CallRecordingCoordinator {
         isRecording = false
     }
 
-    /// Phase 5.3: runs both configured uploads for a just-finished
-    /// recording, Drive first so its resulting link can be embedded in the
-    /// Telegram caption (Windows-parity `BuildCaption`'s
-    /// "💾 Google Drive: {url}" line — `TelegramUploadService`'s `driveUrl`
-    /// parameter existed since Phase 4.2 specifically for this, just had
-    /// nothing to pass it until now). Sequential, not parallel, precisely
-    /// because of that dependency; Drive failing/being unconfigured doesn't
-    /// block the Telegram leg — `uploadToGoogleDrive` degrades to nil
-    /// instead of throwing.
-    private func uploadRecording(fileURL: URL) async {
-        let driveUrl = await uploadToGoogleDrive(fileURL: fileURL)
-        await uploadToTelegram(fileURL: fileURL, driveUrl: driveUrl)
-    }
-
-    /// Sends a just-finished recording to the configured Google Drive
-    /// folder. Silently skips (with a log line, not an error) when Drive
-    /// isn't configured at all — same opt-in-automation reasoning as
-    /// `uploadToTelegram`'s telegramChatId guard below. Returns the
-    /// uploaded file's webViewLink on success, nil on skip *or* failure —
-    /// a Drive hiccup should never take down the Telegram upload that
-    /// follows, so the error is logged here rather than rethrown.
-    private func uploadToGoogleDrive(fileURL: URL) async -> String? {
-        guard AppSettings.shared.googleServiceAccountPath != nil,
-              AppSettings.shared.googleDriveFolderId != nil else {
-            print("[CallRecordingCoordinator] ℹ️ googleServiceAccountPath/googleDriveFolderId не налаштовано — пропускаю автоматичне завантаження в Google Drive.")
-            return nil
-        }
-        do {
-            let link = try await GoogleDriveUploadService.upload(filePath: fileURL.path)
-            print("[CallRecordingCoordinator] ✅ запис завантажено в Google Drive — \(link)")
-            return link
-        } catch {
-            print("[CallRecordingCoordinator] ❌ не вдалося завантажити запис у Google Drive: \(error)")
-            return nil
-        }
-    }
-
-    /// Sends a just-finished recording to the configured Telegram chat/topic.
-    /// Silently skips (with a log line, not an error) when Telegram isn't
-    /// configured at all — this is opt-in automation, not a hard requirement
-    /// for local recording to work. `driveUrl` (Phase 5.3) is nil whenever
-    /// Drive upload was skipped or failed — `buildCaption` already treats a
-    /// nil/empty driveUrl as "omit that caption line", so no extra branching
-    /// is needed here.
-    private func uploadToTelegram(fileURL: URL, driveUrl: String?) async {
-        guard AppSettings.shared.telegramChatId != nil else {
-            print("[CallRecordingCoordinator] ℹ️ telegramChatId не налаштовано — пропускаю автоматичну відправку в Telegram.")
-            return
-        }
-        guard let client = await telegramClient() else { return }
-
+    /// Phase 5.3/6: runs both configured uploads for a just-finished
+    /// recording via `UploadOrchestrator` (Drive first, so its resulting
+    /// link can be embedded in the Telegram caption — Windows-parity
+    /// `BuildCaption`'s "💾 Google Drive: {url}" line), then persists the
+    /// outcome to `RecordingHistory` so any step that failed gets picked up
+    /// later by `retryPendingUploads()` instead of being lost.
+    private func uploadRecording(fileURL: URL, entryID: UUID) async {
         let fileName = fileURL.lastPathComponent
-        do {
-            let messageId = try await TelegramUploadService.sendRecording(
-                filePath: fileURL.path,
-                caption: "Запис дзвінку: \(fileName)",
-                driveUrl: driveUrl,
-                client: client
+        let caption = "Запис дзвінку: \(fileName)"
+        let client = await telegramClient()
+
+        let result = await UploadOrchestrator.run(
+            filePath: fileURL.path,
+            caption: caption,
+            existingDriveUrl: nil,
+            existingTelegramMessageId: nil,
+            telegramClient: client
+        )
+
+        RecordingHistory.shared.updateUploadState(
+            id: entryID,
+            driveUrl: result.driveUrl,
+            driveFailed: result.driveFailed,
+            telegramMessageId: result.telegramMessageId,
+            telegramFailed: result.telegramFailed
+        )
+    }
+
+    /// Phase 6: re-attempts Drive/Telegram for any recording whose last
+    /// attempt left something unfinished (network hiccup, Telegram login
+    /// not ready at the time, etc.) and whose local file is still around to
+    /// retry with. Called on a timer by `PendingUploadRetryService`; safe
+    /// to run concurrently with `callStarted`/`callEnded`/`shutdown` since
+    /// this whole type is an actor — a retry tick landing mid-call just
+    /// gets serialized like any other actor call.
+    func retryPendingUploads() async {
+        let candidates = RecordingHistory.shared.beginRetryCandidates()
+        guard !candidates.isEmpty else { return }
+
+        for entry in candidates {
+            guard let filePath = entry.filePath else {
+                // Shouldn't happen — `needsBackgroundRetry` already checks
+                // filePath/file-existence — but guard anyway rather than
+                // force-unwrap, and release the in-progress flag either way.
+                RecordingHistory.shared.endBackgroundRetry(id: entry.id)
+                continue
+            }
+
+            let fileName = (filePath as NSString).lastPathComponent
+            let caption = "Запис дзвінку: \(fileName)"
+            // Resolved even when Telegram already has a messageId: if
+            // *Drive* is what this entry is retrying and it succeeds now,
+            // UploadOrchestrator needs a client to patch the already-sent
+            // Telegram message's caption with the new Drive link (see
+            // UploadOrchestrator.run's driveJustSucceeded branch).
+            let client = await telegramClient()
+
+            let result = await UploadOrchestrator.run(
+                filePath: filePath,
+                caption: caption,
+                existingDriveUrl: entry.driveUrl,
+                existingTelegramMessageId: entry.telegramMessageId,
+                telegramClient: client
             )
-            print("[CallRecordingCoordinator] ✅ запис надіслано в Telegram — messageId=\(messageId).")
-        } catch {
-            print("[CallRecordingCoordinator] ❌ не вдалося надіслати запис у Telegram: \(error)")
+
+            RecordingHistory.shared.updateUploadState(
+                id: entry.id,
+                driveUrl: result.driveUrl,
+                driveFailed: result.driveFailed,
+                telegramMessageId: result.telegramMessageId,
+                telegramFailed: result.telegramFailed
+            )
+
+            if !result.driveFailed && !result.telegramFailed {
+                print("[CallRecordingCoordinator] ✅ фоновий retry доробив запис \(fileName).")
+            }
+
+            RecordingHistory.shared.endBackgroundRetry(id: entry.id)
         }
     }
 
-    /// Returns the process-lifetime TDLib client, logging in lazily on first
-    /// use. Reuses `telegramAuthClient` across calls so a second recording
-    /// doesn't re-authenticate from scratch. Returns nil (with a log line)
-    /// when apiId/apiHash aren't configured yet, rather than throwing —
-    /// callers treat "Telegram not set up" as a normal skip, not an error.
-    private func telegramClient() async -> TDLibClient? {
+    /// Returns the process-lifetime Telegram auth client (TDLib session
+    /// wrapper), logging in lazily on first use. Reuses `telegramAuthClient`
+    /// across calls so a second recording doesn't re-authenticate from
+    /// scratch. Returns nil (with a log line) when apiId/apiHash aren't
+    /// configured yet, rather than throwing — callers treat "Telegram not
+    /// set up" as a normal skip, not an error.
+    ///
+    /// Returns the auth-client wrapper itself, not just its `.client` —
+    /// `TelegramUploadService.sendRecording`'s Phase 6 fix needs
+    /// `TelegramAuthClient.finalMessageId(forTemporaryId:)` (correlates
+    /// `sendMessage`'s temporary id to the server-confirmed final id via
+    /// `updateMessageSendSucceeded`) alongside the raw TDLib client, and
+    /// that correlation only lives on the auth-client wrapper.
+    private func telegramClient() async -> TelegramAuthClient? {
         if let telegramAuthClient {
-            return telegramAuthClient.client
+            return telegramAuthClient
         }
         let newClient = TelegramAuthClient()
         do {
@@ -213,6 +243,6 @@ actor CallRecordingCoordinator {
             return nil
         }
         telegramAuthClient = newClient
-        return newClient.client
+        return newClient
     }
 }

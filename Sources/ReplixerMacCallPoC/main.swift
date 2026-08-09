@@ -183,6 +183,13 @@ monitor.onCallEnded = { messenger, name in
 }
 monitor.start()
 
+// Phase 6: background "catch up" for recordings whose Drive/Telegram
+// upload didn't fully succeed even after the immediate one-shot retry
+// inside GoogleDriveUploadService/TelegramUploadService (e.g. no internet
+// at all for a while) — ticks every 10s, see PendingUploadRetryService.
+let pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
+pendingUploadRetryService.start()
+
 // Phase 1.6: catch Ctrl+C (SIGINT) and `kill` (SIGTERM, the default signal)
 // so an active recording gets a clean stop() — which renames its
 // .inprogress file to the real name — instead of being killed mid-write.
@@ -193,6 +200,7 @@ signal(SIGTERM, SIG_IGN)
 
 func handleShutdownSignal(_ signalName: String) {
     print("[\(timestamp())] Отримано \(signalName) — коректно завершую (зупиняю активний запис, якщо є)...")
+    pendingUploadRetryService.stop()
     Task {
         await coordinator.shutdown()
         // Phase 2.1/2.2: flush any debounced-but-not-yet-written settings

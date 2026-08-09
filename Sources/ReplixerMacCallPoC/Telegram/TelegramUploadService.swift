@@ -42,12 +42,17 @@ enum TelegramUploadService {
         filePath: String,
         caption: String,
         driveUrl: String? = nil,
-        client: TDLibClient,
+        authClient: TelegramAuthClient,
         isRetry: Bool = false
     ) async throws -> Int64 {
         guard let chatId = AppSettings.shared.telegramChatId else {
             throw UploadError.missingChatId
         }
+        // Force-unwrap is safe here: authClient.client is only ever nil
+        // before TelegramAuthClient.login() returns, and callers only ever
+        // hand us an authClient that already completed login successfully
+        // (see CallRecordingCoordinator.telegramClient()).
+        let client = authClient.client!
         let topicId = AppSettings.shared.telegramTopicId
         let messageTopic: MessageTopic? = topicId.map { .messageTopicForum(MessageTopicForum(forumTopicId: $0)) }
 
@@ -72,13 +77,41 @@ enum TelegramUploadService {
                 replyTo: nil,
                 topicId: messageTopic
             )
-            return sent.id
+            // sent.id is a *temporary* local id (see the doc comment on
+            // TelegramAuthClient.pendingSendResolutions) — await the real,
+            // server-confirmed id before returning, so what
+            // RecordingHistory ends up persisting (and what a later
+            // editMessageCaption call, e.g. the Phase 6 Drive-link patch,
+            // targets) is actually valid.
+            return await authClient.finalMessageId(forTemporaryId: sent.id)
         } catch {
             guard !isRetry else { throw error }
             print("[TelegramUploadService] ⚠️ відправка не вдалась (\(error)), повторна спроба через 2с...")
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            return try await sendRecording(filePath: filePath, caption: caption, driveUrl: driveUrl, client: client, isRetry: true)
+            return try await sendRecording(filePath: filePath, caption: caption, driveUrl: driveUrl, authClient: authClient, isRetry: true)
         }
+    }
+
+    /// Phase 6 addition: patches an already-sent message's caption —
+    /// specifically for the case where Telegram succeeded *before* Drive
+    /// did (Drive failed at call-end time, then a later background retry
+    /// finally got a `driveUrl`). Windows only closes this exact gap
+    /// manually, via `HomeViewModel`'s "Редагувати" button
+    /// (`EditMessageAsync`/`EditTelegramCaptionAsync`) — macOS has no
+    /// report-edit UI yet (Phase 7), so `UploadOrchestrator` calls this
+    /// automatically instead of leaving the message's caption permanently
+    /// missing the Drive link. No retry-on-failure here (unlike
+    /// `sendRecording`) — this is a best-effort cosmetic fixup the caller
+    /// treats as non-fatal; the recording is already safely uploaded to
+    /// both destinations either way.
+    static func editCaption(messageId: Int64, chatId: Int64, caption: String, driveUrl: String?, authClient: TelegramAuthClient) async throws {
+        _ = try await authClient.client.editMessageCaption(
+            caption: FormattedText(entities: [], text: buildCaption(caption, driveUrl: driveUrl)),
+            chatId: chatId,
+            messageId: messageId,
+            replyMarkup: nil,
+            showCaptionAboveMedia: false
+        )
     }
 
     /// Windows parity: `BuildCaption` appends `"\n💾 Google Drive: {url}"`

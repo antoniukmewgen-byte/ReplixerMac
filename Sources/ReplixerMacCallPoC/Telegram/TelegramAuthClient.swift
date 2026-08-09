@@ -35,6 +35,21 @@ final class TelegramAuthClient {
     // list.
     private(set) var chatFolders: [ChatFolderInfo] = []
 
+    // Phase 6 fix: `sendMessage`'s immediate return value carries a
+    // *temporary* local message id — TDLib's own doc comment on
+    // `updateMessageSendSucceeded.oldMessageId` calls it out explicitly as
+    // "the previous temporary message identifier". That temporary id stops
+    // being valid for follow-up operations (e.g. `editMessageCaption`, used
+    // by `TelegramUploadService.editCaption` for the Phase 6 Drive-link
+    // caption patch) once the server actually confirms the send and swaps
+    // in the real id — trying to use the temporary id later fails with
+    // `MESSAGE_CANT_BE_EDITED` regardless of how long you wait, since it's
+    // simply the wrong id, not a timing race. Correlates temp id -> real id
+    // by listening for `updateMessageSendSucceeded`/`updateMessageSendFailed`
+    // in `route(data:client:apiId:apiHash:)` below, so callers can await the
+    // real id instead of trusting `sendMessage`'s return value directly.
+    private var pendingSendResolutions: [Int64: CheckedContinuation<Int64, Never>] = [:]
+
     private let databaseDirectory: URL = {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ReplixerMac", isDirectory: true)
@@ -98,6 +113,25 @@ final class TelegramAuthClient {
         case .updateChatFolders(let foldersUpdate):
             chatFolders = foldersUpdate.chatFolders
 
+        case .updateMessageSendSucceeded(let succeeded):
+            if let continuation = pendingSendResolutions.removeValue(forKey: succeeded.oldMessageId) {
+                continuation.resume(returning: succeeded.message.id)
+            }
+
+        case .updateMessageSendFailed(let failed):
+            // Send ultimately failed server-side after all (rare — the
+            // in-process catch in TelegramUploadService.sendRecording
+            // normally sees this first via the RPC's own thrown error).
+            // Resolve with the temporary id itself just to unblock the
+            // awaiting continuation rather than hanging forever; nothing
+            // downstream will find that id valid, but the caller's own
+            // error handling already treats the send as failed through a
+            // different path, so this is purely a safety net against a
+            // stuck await.
+            if let continuation = pendingSendResolutions.removeValue(forKey: failed.oldMessageId) {
+                continuation.resume(returning: failed.oldMessageId)
+            }
+
         default:
             // Messages, chat updates, etc. — nothing for the login flow
             // itself to react to (Phase 4.1/4.2 scope).
@@ -159,6 +193,17 @@ final class TelegramAuthClient {
             // in-between state TDLib may report — nothing for the login
             // flow itself to react to.
             break
+        }
+    }
+
+    /// Suspends until TDLib confirms the send that produced `temporaryId`
+    /// (`sendMessage`'s own immediate return value) and resolves with the
+    /// real, server-confirmed message id — see the `pendingSendResolutions`
+    /// doc comment above for why the temporary id can't be used directly
+    /// for later operations like `editMessageCaption`.
+    func finalMessageId(forTemporaryId temporaryId: Int64) async -> Int64 {
+        await withCheckedContinuation { continuation in
+            pendingSendResolutions[temporaryId] = continuation
         }
     }
 

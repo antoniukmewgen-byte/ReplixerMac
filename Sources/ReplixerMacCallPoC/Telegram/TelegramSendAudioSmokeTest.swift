@@ -29,7 +29,7 @@ enum TelegramSendAudioSmokeTest {
             let messageId = try await TelegramUploadService.sendRecording(
                 filePath: filePath,
                 caption: "Запис дзвінку: \(fileName)",
-                client: authClient.client!
+                authClient: authClient
             )
             print("[\(timestamp())] ✅ Аудіофайл надіслано — messageId=\(messageId).")
         } catch TelegramUploadService.UploadError.missingChatId {
