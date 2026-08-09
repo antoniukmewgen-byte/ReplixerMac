@@ -4,7 +4,7 @@ import Foundation
 /// scoped down to states we can actually produce with no upload pipeline
 /// yet (`.loading`/`.draft` there exist for the upload-form/upload-retry
 /// flow Phase 4-6 will add — not meaningful before that exists).
-enum RecordingStatus: String, Codable {
+public enum RecordingStatus: String, Codable {
     /// Call is active, AudioMixerEncoder is currently writing the
     /// `.inprogress` file. An entry left in this state across an app
     /// restart means the process died mid-recording (crash/`kill -9`) —
@@ -28,24 +28,32 @@ enum RecordingStatus: String, Codable {
 /// populate them. No Kommo field yet (Phase 10, not built).
 public struct RecordingEntry: Codable, Identifiable {
     public let id: UUID
-    let platform: String
-    let startedAt: Date
-    var filePath: String?
-    var status: RecordingStatus
-    var callDuration: TimeInterval
+    // public internal(set): readable from ReplixerMacApp (Phase 7.4's
+    // RecordingsView) but only ever mutated inside this module, exclusively
+    // via RecordingHistory's methods — the UI reads snapshots, it never
+    // writes entries directly.
+    public let platform: String
+    public let startedAt: Date
+    public internal(set) var filePath: String?
+    public internal(set) var status: RecordingStatus
+    public internal(set) var callDuration: TimeInterval
 
     // Phase 6: upload-tracking, Windows parity source RecordingEntry.cs's
     // DriveUrl/TelegramMessageId/DriveFailed/TelegramFailed. Persisted (see
     // CodingKeys) so a background retry — or even an app restart in the
     // middle of one — can pick up exactly where a failed upload left off,
     // without re-running steps that already succeeded (a non-nil
-    // driveUrl/telegramMessageId means "already done, don't redo").
-    var driveUrl: String?
-    var telegramMessageId: Int64?
+    // driveUrl/telegramMessageId means "already done, don't redo"). Public
+    // (Phase 7.4): RecordingsView shows a Drive-link button / Telegram-sent
+    // badge when these are set, same as Windows' RecordingItemView.
+    public internal(set) var driveUrl: String?
+    public internal(set) var telegramMessageId: Int64?
     // "This step was attempted and failed" — distinct from driveUrl/
     // telegramMessageId being nil, which can also mean "not configured,
     // never attempted". Only these flags tell UploadOrchestrator/
-    // PendingUploadRetryService what's actually worth retrying.
+    // PendingUploadRetryService what's actually worth retrying. Not needed
+    // by the UI yet (entry.status doesn't reflect partial upload failure),
+    // stays internal until something actually reads it.
     var driveFailed: Bool
     var telegramFailed: Bool
 

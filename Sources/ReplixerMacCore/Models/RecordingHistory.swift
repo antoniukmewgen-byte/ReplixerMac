@@ -2,15 +2,18 @@ import Foundation
 
 /// In-memory + persisted (`recordings.json`) history of recordings.
 /// Windows parity source: `RecordingsViewModel.cs`'s load/save logic,
-/// without the UI-facing `ObservableCollection`/`CommandManager` pieces —
-/// no UI exists yet (Phase 7). Driven directly by CallRecordingCoordinator
-/// as calls start/end.
+/// without the UI-facing `ObservableCollection`/`CommandManager` pieces.
+/// Mutated by CallRecordingCoordinator (an actor) as calls start/end/
+/// upload; read by RecordingsView (Phase 7.4, main thread) to display
+/// history.
 ///
-/// Not an actor/thread-safe type on its own — every call into this class
-/// currently happens from CallRecordingCoordinator, which is itself an
-/// actor, so calls are already serialized by the time they get here. If a
-/// future phase calls this from elsewhere too, that assumption needs
-/// revisiting.
+/// Thread-safe (lock-protected `_entries`, see below) since Phase 7.4 —
+/// before that, every call into this class happened from
+/// CallRecordingCoordinator's single serialized actor executor, so no
+/// synchronization was needed. Not an actor itself: nothing here ever needs
+/// to `await` while holding the lock, so a plain `NSLock` is enough and
+/// avoids forcing every call site (several of them synchronous, non-async
+/// methods on CallRecordingCoordinator) to become `async` just to reach it.
 public final class RecordingHistory {
     public static let shared = RecordingHistory()
 
@@ -20,14 +23,41 @@ public final class RecordingHistory {
             .appendingPathComponent("recordings.json")
     )
 
-    public private(set) var entries: [RecordingEntry]
+    // Posted (from whatever thread the mutation happened on — usually
+    // CallRecordingCoordinator's actor executor, not the main thread) after
+    // every change to `entries`. Phase 7.4: RecordingsView observes this to
+    // refresh instead of ReplixerMacCore depending on Combine/SwiftUI
+    // directly (Phase 7's headless-core split) — observers must hop to the
+    // main actor themselves before touching UI state, e.g. via
+    // `.receive(on: DispatchQueue.main)`.
+    public static let didChangeNotification = Notification.Name("ReplixerMac.RecordingHistory.didChange")
+
+    // Every mutating method here was, until Phase 7.4, only ever called
+    // from CallRecordingCoordinator's actor executor — a single serialized
+    // context, so `entries` never needed its own synchronization. Phase
+    // 7.4 adds a second, genuinely concurrent reader (RecordingsView, on
+    // the main thread), so unprotected access is now a real data race, not
+    // just a theoretical one — a lock is enough here (not another actor):
+    // every operation below is a quick, synchronous, in-memory array edit,
+    // never something that needs to `await` while holding it.
+    private let lock = NSLock()
+    private var _entries: [RecordingEntry]
+
+    /// Thread-safe snapshot. Safe to call from any thread/actor — copies
+    /// out under the lock rather than exposing the live array, so the
+    /// caller's copy can never be torn by a concurrent mutation.
+    public var entries: [RecordingEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _entries
+    }
 
     private init() {
         switch RecordingHistory.store.load() {
         case .decoded(let loaded):
-            entries = loaded
+            _entries = loaded
         case .notFound:
-            entries = []
+            _entries = []
         case .decodeFailed(let error):
             // Unlike AppSettings.load(), there's no immediate saveNow()
             // here to guard against — but starting from an empty array and
@@ -38,8 +68,25 @@ public final class RecordingHistory {
             // paved over.
             print("[RecordingHistory] ❌ не вдалося прочитати \(RecordingHistory.store.url.path): \(error)")
             print("[RecordingHistory] ⚠️ Стартую з порожньою історією в пам'яті — файл на диску поки НЕ буде перезаписано, але зверни увагу, якщо це неочікувано.")
-            entries = []
+            _entries = []
         }
+    }
+
+    /// Runs `body` under the lock; if it reports something actually
+    /// changed, schedules a debounced save and notifies observers outside
+    /// the lock (so a re-entrant observer can't deadlock on it). Every
+    /// mutating method below funnels through this so "change the array" and
+    /// "persist + tell the UI" can never accidentally drift apart.
+    private func mutate(_ body: (inout [RecordingEntry]) -> Bool) {
+        let didChange: Bool
+        let snapshot: [RecordingEntry]
+        lock.lock()
+        didChange = body(&_entries)
+        snapshot = _entries
+        lock.unlock()
+        guard didChange else { return }
+        RecordingHistory.store.scheduleSave(snapshot)
+        NotificationCenter.default.post(name: RecordingHistory.didChangeNotification, object: nil)
     }
 
     /// JSON-level counterpart of `FileNaming.cleanupStalePartialFiles()`: any
@@ -56,12 +103,12 @@ public final class RecordingHistory {
     @discardableResult
     public func reconcileDanglingRecordings() -> Int {
         var count = 0
-        for index in entries.indices where entries[index].status == .recording {
-            entries[index].status = .error
-            count += 1
-        }
-        if count > 0 {
-            RecordingHistory.store.scheduleSave(entries)
+        mutate { entries in
+            for index in entries.indices where entries[index].status == .recording {
+                entries[index].status = .error
+                count += 1
+            }
+            return count > 0
         }
         return count
     }
@@ -82,23 +129,29 @@ public final class RecordingHistory {
     @discardableResult
     func addStarted(platform: String) -> UUID {
         let entry = RecordingEntry(platform: platform)
-        entries.insert(entry, at: 0)
-        RecordingHistory.store.scheduleSave(entries)
+        mutate { entries in
+            entries.insert(entry, at: 0)
+            return true
+        }
         return entry.id
     }
 
     func markFinished(id: UUID, filePath: String) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].filePath = filePath
-        entries[index].status = .saved
-        entries[index].callDuration = Date().timeIntervalSince(entries[index].startedAt)
-        RecordingHistory.store.scheduleSave(entries)
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].filePath = filePath
+            entries[index].status = .saved
+            entries[index].callDuration = Date().timeIntervalSince(entries[index].startedAt)
+            return true
+        }
     }
 
     func markFailed(id: UUID) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].status = .error
-        RecordingHistory.store.scheduleSave(entries)
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].status = .error
+            return true
+        }
     }
 
     /// Phase 6: records the outcome of an upload attempt (initial or
@@ -109,12 +162,14 @@ public final class RecordingHistory {
     /// nil), so there's never a need to distinguish "don't touch" from
     /// "set to nil/false" here.
     func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].driveUrl = driveUrl
-        entries[index].driveFailed = driveFailed
-        entries[index].telegramMessageId = telegramMessageId
-        entries[index].telegramFailed = telegramFailed
-        RecordingHistory.store.scheduleSave(entries)
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].driveUrl = driveUrl
+            entries[index].driveFailed = driveFailed
+            entries[index].telegramMessageId = telegramMessageId
+            entries[index].telegramFailed = telegramFailed
+            return true
+        }
     }
 
     /// Phase 6: snapshot of entries whose last upload attempt left
@@ -125,10 +180,18 @@ public final class RecordingHistory {
     /// same entry. `isBackgroundRetrying` isn't persisted (see
     /// RecordingEntry), so no save is scheduled here.
     func beginRetryCandidates() -> [RecordingEntry] {
+        // Not routed through `mutate`: `isBackgroundRetrying` is
+        // deliberately unpersisted (see RecordingEntry), so this
+        // intentionally skips both the scheduleSave and the UI-refresh
+        // notification `mutate` would otherwise trigger — same behavior as
+        // before the lock existed, just now safe to call concurrently with
+        // a RecordingsView read.
+        lock.lock()
+        defer { lock.unlock() }
         var candidates: [RecordingEntry] = []
-        for index in entries.indices where entries[index].needsBackgroundRetry && !entries[index].isBackgroundRetrying {
-            entries[index].isBackgroundRetrying = true
-            candidates.append(entries[index])
+        for index in _entries.indices where _entries[index].needsBackgroundRetry && !_entries[index].isBackgroundRetrying {
+            _entries[index].isBackgroundRetrying = true
+            candidates.append(_entries[index])
         }
         return candidates
     }
@@ -138,8 +201,10 @@ public final class RecordingHistory {
     /// partial success, or the entry's file having vanished) so an entry
     /// can never get stuck permanently skipped.
     func endBackgroundRetry(id: UUID) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].isBackgroundRetrying = false
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = _entries.firstIndex(where: { $0.id == id }) else { return }
+        _entries[index].isBackgroundRetrying = false
     }
 
     /// Forces any pending debounced save to happen immediately — call

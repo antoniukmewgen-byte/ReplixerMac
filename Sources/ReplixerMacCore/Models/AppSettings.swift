@@ -20,10 +20,10 @@ public final class AppSettings: Codable {
             .appendingPathComponent("settings.json")
     )
 
-    // Read externally (main.swift logs it at startup); no external caller
-    // sets it yet (no settings UI until Phase 7), so the setter stays
-    // internal rather than being opened up unnecessarily.
-    public internal(set) var managerName: String {
+    // Read externally (main.swift logs it at startup) and, since Phase 7.3,
+    // written externally too — SettingsView (ReplixerMacApp target) is the
+    // first real settings UI, so the setter is fully public now.
+    public var managerName: String {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
