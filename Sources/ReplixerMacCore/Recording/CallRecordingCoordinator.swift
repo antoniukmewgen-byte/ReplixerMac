@@ -88,6 +88,10 @@ public actor CallRecordingCoordinator {
 
         isRecording = true
         currentEntryID = RecordingHistory.shared.addStarted(platform: platform)
+        // Phase 7.5: mirror the state change into RecordingStatusStore so
+        // HomeView (ReplixerMacApp, main thread) can show a live
+        // "recording in progress" indicator without polling this actor.
+        RecordingStatusStore.shared.update(.init(isRecording: true, platform: platform, startedAt: Date()))
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
     }
 
@@ -155,6 +159,12 @@ public actor CallRecordingCoordinator {
         }
         currentEntryID = nil
         isRecording = false
+        // Phase 7.5: reset the live status regardless of success/failure —
+        // an entry left showing "recording" in the UI after a failed stop
+        // would be as misleading as RecordingHistory leaving one stuck in
+        // `.recording` status forever (see that type's own dangling-entry
+        // handling).
+        RecordingStatusStore.shared.update(.idle)
     }
 
     /// Phase 5.3/6: runs both configured uploads for a just-finished

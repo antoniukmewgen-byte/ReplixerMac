@@ -1,25 +1,66 @@
 import SwiftUI
 import AppKit
+import ReplixerMacCore
 
-/// Forces the app to actually take keyboard focus on launch.
-///
-/// Root cause of "cursor blinks in the TextField but keystrokes land in
-/// Xcode": `ReplixerMacApp` is a raw SwiftPM executable, not a proper
-/// Launch-Services-registered `.app` bundle opened via Finder/Dock/`open`.
-/// Apps launched that way (including "spawned directly by Xcode's
-/// debugger", which is what happens here) don't get the automatic
-/// frontmost-activation that Finder-launched apps get for free — the
-/// process runs, its window draws and can be clicked, but the *key
-/// (frontmost) application* at the OS level stays Xcode, so all keyboard
-/// events keep routing there regardless of which window looks focused.
-/// `NSApp.activate(ignoringOtherApps:)` explicitly steals that focus; must
-/// run from `applicationDidFinishLaunching` (not the App struct's own
-/// `init()`, which fires before `NSApplication`'s run loop — and therefore
-/// before there's anything to activate — is actually spun up).
+/// Owns the app's runtime side: activation, and — since Phase 7.5 — the
+/// actual call-detection/recording pipeline (`CallMonitor` +
+/// `CallRecordingCoordinator` + `PendingUploadRetryService`), previously
+/// only wired up in `ReplixerMacCallPoC/main.swift`. Until now
+/// `ReplixerMacApp` was, per its own Phase 7.1 doc comment, "minimal SwiftUI
+/// app shell, not yet wired up to ReplixerMacCore's functionality" — Phase
+/// 7.5's HomeView needs a live "is a call being recorded right now" status
+/// to show, which only exists if this app actually runs the pipeline
+/// itself, not just displays data a separate CLI process happened to write
+/// to disk. `ReplixerMacCallPoC` keeps its own copy of this wiring (it
+/// remains useful as a UI-less runner/smoke-test harness) — the two aren't
+/// meant to run at the same time against the same user, same as Windows
+/// only ever running as a single instance.
 private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let coordinator = CallRecordingCoordinator()
+    private let monitor = CallMonitor()
+    private lazy var pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // See this class's doc comment for why this steals focus — SwiftPM
+        // executables launched via Xcode's debugger don't get the
+        // automatic frontmost-activation Finder-launched apps get for free.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
+        // `.inprogress` file / dangling `.recording` history entry left by a
+        // crash or force-quit on a previous run before doing anything else.
+        FileNaming.cleanupStalePartialFiles()
+        let reconciledCount = RecordingHistory.shared.reconcileDanglingRecordings()
+        if reconciledCount > 0 {
+            print("[ReplixerMacApp] ⚠️ Знайдено \(reconciledCount) запис(ів) історії, залишених у статусі \"recording\" після аварійного завершення — позначено як \"error\".")
+        }
+
+        monitor.onCallStarted = { [coordinator] messenger, name in
+            Task { await coordinator.callStarted(messenger: messenger, processName: name) }
+        }
+        monitor.onCallEnded = { [coordinator] messenger, name in
+            Task { await coordinator.callEnded(messenger: messenger, processName: name) }
+        }
+        monitor.start()
+        pendingUploadRetryService.start()
+    }
+
+    /// AppKit's async-shutdown hook: returning `.terminateLater` and calling
+    /// `NSApp.reply(toApplicationShouldTerminate:)` once cleanup finishes
+    /// lets Cmd+Q/Dock-quit wait for an in-flight recording to be finalized
+    /// (renamed from `.inprogress`) and pending settings/history writes to
+    /// flush — same intent as main.swift's SIGINT/SIGTERM handlers, adapted
+    /// to how a real (non-CLI) macOS app actually gets asked to quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        pendingUploadRetryService.stop()
+        Task { [coordinator] in
+            await coordinator.shutdown()
+            AppSettings.shared.flush()
+            RecordingHistory.shared.flush()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
