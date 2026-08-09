@@ -7,11 +7,12 @@ import ReplixerMacCore
 /// `AppSettings`") — but scoped down to what mac `AppSettings` actually
 /// persists today. Windows exposes `IsAutoStartEnabled`,
 /// `IsNotificationsEnabled`, `WorkDayStart`/`WorkDayEnd` here too; mac
-/// `AppSettings` deliberately has none of those fields yet (its own doc
-/// comment: don't add a field before the phase that gives it real behavior
-/// — autostart needs Phase 8's `SMAppService`, notifications need a real
-/// notification-sending path). So this screen doesn't grow fake toggles for
-/// them either; it only surfaces what's real right now: `managerName`.
+/// `AppSettings` deliberately had none of those fields until Phase 8 gave
+/// `IsAutoStartEnabled` a real backend (`AutoStartManager`/`SMAppService`) —
+/// see the "Запуск" section below. `IsNotificationsEnabled`/`WorkDayStart`/
+/// `WorkDayEnd` still have no real behavior to drive (no notification-
+/// sending path exists yet), so those stay cut for now, same
+/// don't-add-a-field-before-the-phase-that-uses-it stance.
 ///
 /// Telegram/Google Drive credentials (`telegramApiId/Hash`, `telegramChatId`
 /// /`TopicId`, `googleServiceAccountPath`, `googleDriveFolderId`) stay
@@ -24,6 +25,15 @@ struct SettingsView: View {
     // this view can't just @ObservedObject/bind straight into the model. It
     // mirrors the value in local @State and writes back explicitly instead.
     @State private var managerName: String = AppSettings.shared.managerName
+    // Phase 8.2: seeded from AppSettings (last-known intent), not from
+    // AutoStartManager.isEnabled (ground truth) — this Form should reflect
+    // "what the user asked for" immediately on screen without waiting on a
+    // SMAppService round-trip, same instant-feedback stance every other
+    // field on this screen already takes. autoStartError surfaces a thrown
+    // registration failure inline rather than silently reverting the
+    // toggle with no explanation.
+    @State private var isAutoStartEnabled: Bool = AppSettings.shared.isAutoStartEnabled
+    @State private var autoStartError: String?
 
     var body: some View {
         Form {
@@ -34,6 +44,17 @@ struct SettingsView: View {
                     // instead of pressing Return) — onSubmit alone would
                     // miss those.
                     .onChange(of: managerName) { _, _ in saveManagerName() }
+            }
+
+            Section("Запуск") {
+                Toggle("Запускати ReplixerMac при вході в систему", isOn: $isAutoStartEnabled)
+                    .onChange(of: isAutoStartEnabled) { _, newValue in setAutoStart(newValue) }
+
+                if let autoStartError {
+                    Label(autoStartError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                }
             }
 
             Section("Дані застосунку") {
@@ -59,6 +80,23 @@ struct SettingsView: View {
         let trimmed = managerName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         AppSettings.shared.managerName = trimmed
+    }
+
+    // Registers/unregisters with launchd first, and only writes
+    // AppSettings.isAutoStartEnabled if that succeeds — so a thrown
+    // SMAppService error doesn't leave the persisted setting claiming a
+    // state that isn't actually true on disk. On failure, the toggle is
+    // snapped back to the last-known-good value rather than left showing
+    // whatever the user just clicked.
+    private func setAutoStart(_ enabled: Bool) {
+        autoStartError = nil
+        do {
+            try AutoStartManager.setEnabled(enabled)
+            AppSettings.shared.isAutoStartEnabled = enabled
+        } catch {
+            autoStartError = "Не вдалося змінити автозапуск: \(error)"
+            isAutoStartEnabled = AppSettings.shared.isAutoStartEnabled
+        }
     }
 }
 

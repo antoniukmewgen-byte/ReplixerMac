@@ -19,6 +19,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let coordinator = CallRecordingCoordinator()
     private let monitor = CallMonitor()
     private lazy var pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
+    // Phase 8.1: menu bar icon (Windows-parity: TrayViewModel's TaskbarIcon).
+    // Held here, not as a local var in applicationDidFinishLaunching — an
+    // NSStatusItem is removed from the menu bar as soon as its owning
+    // object is deallocated, so it needs a strong reference for the whole
+    // app lifetime, same reasoning as `coordinator`/`monitor` above.
+    private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // See this class's doc comment for why this steals focus — SwiftPM
@@ -26,6 +32,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // automatic frontmost-activation Finder-launched apps get for free.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+
+        statusItemController = StatusItemController()
 
         // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
         // `.inprogress` file / dangling `.recording` history entry left by a

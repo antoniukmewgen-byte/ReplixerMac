@@ -87,6 +87,17 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 8.2: launch-at-login toggle, mirrored into the real launchd
+    // registration by AutoStartManager.setEnabled (SettingsView calls both
+    // together — this field alone doesn't register anything, same "plain
+    // data, no side effects of its own" role AppSettings' other fields
+    // play). Defaults to false: opting into background/login-launch
+    // behavior should be a deliberate choice, not silently on for a
+    // fresh install.
+    public var isAutoStartEnabled: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
@@ -96,9 +107,10 @@ public final class AppSettings: Codable {
         case googleServiceAccountPath
         case googleDriveFolderId
         case isSetupComplete
+        case isAutoStartEnabled
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false) {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false) {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
@@ -107,6 +119,7 @@ public final class AppSettings: Codable {
         self.googleServiceAccountPath = googleServiceAccountPath
         self.googleDriveFolderId = googleDriveFolderId
         self.isSetupComplete = isSetupComplete
+        self.isAutoStartEnabled = isAutoStartEnabled
     }
 
     public required init(from decoder: Decoder) throws {
@@ -128,6 +141,13 @@ public final class AppSettings: Codable {
         // re-click through a welcome screen it has no memory of skipping.
         isSetupComplete = try container.decodeIfPresent(Bool.self, forKey: .isSetupComplete)
             ?? (telegramApiId != nil || googleDriveFolderId != nil)
+        // Missing key means this settings.json predates Phase 8.2 — default
+        // to false (not to whatever SMAppService.mainApp.status happens to
+        // report) since a decode is plain data loading, not the place to
+        // reach out to launchd; AppSettings.load()'s only caller context is
+        // app startup, where SettingsView hasn't even rendered yet to show
+        // a mismatch if there were one.
+        isAutoStartEnabled = try container.decodeIfPresent(Bool.self, forKey: .isAutoStartEnabled) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -140,6 +160,7 @@ public final class AppSettings: Codable {
         try container.encode(googleServiceAccountPath, forKey: .googleServiceAccountPath)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
+        try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
     }
 
     private static func load() -> AppSettings {
