@@ -39,11 +39,22 @@ actor CallRecordingCoordinator {
     // as the dangling-recording gap noted in RecordingHistory.addStarted).
     // Phase 5.3: now covers both the Drive and Telegram legs (they run
     // sequentially inside the same Task — see uploadRecording), not just
-    // Telegram alone. Phase 6: any step this task's upload leaves failed
-    // just gets picked up later by PendingUploadRetryService's
-    // retryPendingUploads() calls, so shutdown() still only needs to wait
-    // for this one task, not for retries to exhaust themselves too.
+    // Telegram alone.
     private var pendingUploadTask: Task<Void, Never>?
+
+    // Phase 6 fix: `retryPendingUploads()` suspends mid-flight on real
+    // network calls (inside `UploadOrchestrator.run`) — and because this
+    // whole type is an *actor*, Swift's reentrancy rules let a *different*
+    // queued call (like `shutdown()`) start running during that suspension,
+    // interleaved with the retry still in progress. Without tracking this,
+    // `shutdown()` could reach `telegramAuthClient?.shutdown()` and close
+    // the TDLib client while a background retry's TDLib request is still in
+    // flight — the exact SIGSEGV risk `pendingUploadTask` above already
+    // guards against for the "just-finished recording" upload path, just
+    // for the *background retry* path, which an earlier version of this
+    // comment incorrectly assumed didn't need the same protection.
+    private var isRetryingUploads = false
+    private var retryFinishedContinuations: [CheckedContinuation<Void, Never>] = []
 
     func callStarted(messenger: SupportedMessenger, processName: String) {
         guard !isRecording else {
@@ -95,13 +106,20 @@ actor CallRecordingCoordinator {
     /// `async` (Phase 4.2 addition) so it can wait for any still-in-flight
     /// Telegram upload before tearing down the TDLib client — closing the
     /// client while a request is still using it is a known SIGSEGV risk
-    /// (see TelegramAuthClient.shutdown()'s comments).
+    /// (see TelegramAuthClient.shutdown()'s comments). Phase 6: also waits
+    /// for an in-flight `retryPendingUploads()` for the same reason — see
+    /// the `isRetryingUploads` doc comment above.
     func shutdown() async {
         if isRecording {
             print("[CallRecordingCoordinator] 🛑 завершення роботи під час активного запису — коректно зупиняю...")
             finishRecording()
         }
         await pendingUploadTask?.value
+        if isRetryingUploads {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                retryFinishedContinuations.append(continuation)
+            }
+        }
         telegramAuthClient?.shutdown()
     }
 
@@ -165,13 +183,27 @@ actor CallRecordingCoordinator {
     /// Phase 6: re-attempts Drive/Telegram for any recording whose last
     /// attempt left something unfinished (network hiccup, Telegram login
     /// not ready at the time, etc.) and whose local file is still around to
-    /// retry with. Called on a timer by `PendingUploadRetryService`; safe
-    /// to run concurrently with `callStarted`/`callEnded`/`shutdown` since
-    /// this whole type is an actor — a retry tick landing mid-call just
-    /// gets serialized like any other actor call.
+    /// retry with. Called on a timer by `PendingUploadRetryService`. Safe to
+    /// run concurrently with `callStarted`/`callEnded` — actor isolation
+    /// still prevents those from racing on shared state — but `shutdown()`
+    /// specifically needs the `isRetryingUploads`/`retryFinishedContinuations`
+    /// bookkeeping below: an actor's reentrancy means `shutdown()` *can*
+    /// start running while this method is suspended mid-`await`, so without
+    /// tracking that explicitly, `shutdown()` could close the TDLib client
+    /// out from under a retry that's still using it.
     func retryPendingUploads() async {
         let candidates = RecordingHistory.shared.beginRetryCandidates()
         guard !candidates.isEmpty else { return }
+
+        isRetryingUploads = true
+        defer {
+            isRetryingUploads = false
+            let continuations = retryFinishedContinuations
+            retryFinishedContinuations = []
+            for continuation in continuations {
+                continuation.resume()
+            }
+        }
 
         for entry in candidates {
             guard let filePath = entry.filePath else {
