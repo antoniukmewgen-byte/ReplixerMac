@@ -56,20 +56,42 @@ final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 5: Google Drive upload. Unlike Windows (which embeds the
+    // service-account JSON as a raw string in a build-time AppSecrets
+    // constant), here it's a *path* to a separate service-account JSON file
+    // on disk rather than the JSON pasted inline into settings.json —
+    // deliberate, to avoid repeating the telegramApiHash null-wipe incident
+    // (a multi-hundred-character PEM-embedded JSON string is extremely easy
+    // to mis-quote/escape by hand). Point this at wherever the
+    // Google-provided `service_account.json` was saved.
+    var googleServiceAccountPath: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    // Destination Drive folder id (the part of the folder's URL after
+    // `folders/`) recordings get uploaded into. Same "no UI yet, hand-edit
+    // settings.json" pattern as the Telegram fields above.
+    var googleDriveFolderId: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
         case telegramApiHash
         case telegramChatId
         case telegramTopicId
+        case googleServiceAccountPath
+        case googleDriveFolderId
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil) {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil) {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
+        self.googleServiceAccountPath = googleServiceAccountPath
+        self.googleDriveFolderId = googleDriveFolderId
     }
 
     required init(from decoder: Decoder) throws {
@@ -81,6 +103,8 @@ final class AppSettings: Codable {
         telegramApiHash = try container.decodeIfPresent(String.self, forKey: .telegramApiHash)
         telegramChatId = try container.decodeIfPresent(Int64.self, forKey: .telegramChatId)
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
+        googleServiceAccountPath = try container.decodeIfPresent(String.self, forKey: .googleServiceAccountPath)
+        googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -90,6 +114,8 @@ final class AppSettings: Codable {
         try container.encode(telegramApiHash, forKey: .telegramApiHash)
         try container.encode(telegramChatId, forKey: .telegramChatId)
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
+        try container.encode(googleServiceAccountPath, forKey: .googleServiceAccountPath)
+        try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
     }
 
     private static func load() -> AppSettings {

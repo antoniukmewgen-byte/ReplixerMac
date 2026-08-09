@@ -1,0 +1,27 @@
+# Swift Package Manager build artifacts
+.build/
+.swiftpm/
+DerivedData/
+
+# Xcode
+xcuserdata/
+*.xcodeproj/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+
+# --- Secrets / local config -------------------------------------------
+# Real runtime config lives outside the repo (~/Library/Application
+# Support/ReplixerMac/{settings.json,recordings.json}), so these
+# shouldn't normally appear here at all — this is a safety net in case
+# someone copies a real settings.json or a Google service-account key
+# into the project folder for convenience while testing (e.g. pointing
+# googleServiceAccountPath at a file dropped next to Package.swift).
+settings.json
+recordings.json
+*.pem
+*.p12
+*service-account*.json
+*service_account*.json
+*serviceaccount*.json

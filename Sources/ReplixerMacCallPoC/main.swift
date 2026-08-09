@@ -136,6 +136,29 @@ if let flagIndex = CommandLine.arguments.firstIndex(of: "--telegram-send-audio-s
     RunLoop.main.run()
 }
 
+if CommandLine.arguments.contains("--gdrive-folder-access-smoke-test") {
+    print("[\(timestamp())] Крок Phase 5.1: смоук-тест доступу до Google Drive (service account JWT + перевірка теки).")
+    Task {
+        await GoogleDriveFolderAccessSmokeTest.run()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--gdrive-upload-smoke-test") {
+    guard CommandLine.arguments.count > flagIndex + 1 else {
+        print("[\(timestamp())] ❌ Вкажи шлях до файлу: --gdrive-upload-smoke-test /шлях/до/файлу.m4a")
+        exit(0)
+    }
+    let filePath = CommandLine.arguments[flagIndex + 1]
+    print("[\(timestamp())] Крок Phase 5.2: тест завантаження файлу в Google Drive (\(filePath)).")
+    Task {
+        await GoogleDriveUploadSmokeTest.run(filePath: filePath)
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--mic-smoke-test") {
     print("[\(timestamp())] Крок A (1.2): смоук-тест мікрофона.")
     // requestRecordPermission's completion is async (may land on any queue),

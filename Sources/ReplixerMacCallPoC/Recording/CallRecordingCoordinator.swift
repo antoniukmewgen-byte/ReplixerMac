@@ -38,6 +38,9 @@ actor CallRecordingCoordinator {
     // overwritten and shutdown() would only wait for the newer one, not
     // both — acceptable for now (same "known gap, revisit later" standard
     // as the dangling-recording gap noted in RecordingHistory.addStarted).
+    // Phase 5.3: now covers both the Drive and Telegram legs (they run
+    // sequentially inside the same Task — see uploadRecording), not just
+    // Telegram alone.
     private var pendingUploadTask: Task<Void, Never>?
 
     func callStarted(messenger: SupportedMessenger, processName: String) {
@@ -108,14 +111,14 @@ actor CallRecordingCoordinator {
         if let currentEntryID {
             if let finalURL {
                 RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
-                // Phase 4.2: fire the Telegram upload off as a background
-                // Task rather than awaiting it here — finishRecording() (and
+                // Phase 4.2: fire the uploads off as a background Task
+                // rather than awaiting them here — finishRecording() (and
                 // therefore callEnded()) must return promptly so a rapid
                 // subsequent call isn't wrongly rejected by the `isRecording`
                 // guard while a slow upload is still running. shutdown()
                 // drains this task before closing the TDLib client.
                 pendingUploadTask = Task { [weak self] in
-                    await self?.uploadToTelegram(fileURL: finalURL)
+                    await self?.uploadRecording(fileURL: finalURL)
                 }
             } else {
                 RecordingHistory.shared.markFailed(id: currentEntryID)
@@ -125,11 +128,51 @@ actor CallRecordingCoordinator {
         isRecording = false
     }
 
+    /// Phase 5.3: runs both configured uploads for a just-finished
+    /// recording, Drive first so its resulting link can be embedded in the
+    /// Telegram caption (Windows-parity `BuildCaption`'s
+    /// "💾 Google Drive: {url}" line — `TelegramUploadService`'s `driveUrl`
+    /// parameter existed since Phase 4.2 specifically for this, just had
+    /// nothing to pass it until now). Sequential, not parallel, precisely
+    /// because of that dependency; Drive failing/being unconfigured doesn't
+    /// block the Telegram leg — `uploadToGoogleDrive` degrades to nil
+    /// instead of throwing.
+    private func uploadRecording(fileURL: URL) async {
+        let driveUrl = await uploadToGoogleDrive(fileURL: fileURL)
+        await uploadToTelegram(fileURL: fileURL, driveUrl: driveUrl)
+    }
+
+    /// Sends a just-finished recording to the configured Google Drive
+    /// folder. Silently skips (with a log line, not an error) when Drive
+    /// isn't configured at all — same opt-in-automation reasoning as
+    /// `uploadToTelegram`'s telegramChatId guard below. Returns the
+    /// uploaded file's webViewLink on success, nil on skip *or* failure —
+    /// a Drive hiccup should never take down the Telegram upload that
+    /// follows, so the error is logged here rather than rethrown.
+    private func uploadToGoogleDrive(fileURL: URL) async -> String? {
+        guard AppSettings.shared.googleServiceAccountPath != nil,
+              AppSettings.shared.googleDriveFolderId != nil else {
+            print("[CallRecordingCoordinator] ℹ️ googleServiceAccountPath/googleDriveFolderId не налаштовано — пропускаю автоматичне завантаження в Google Drive.")
+            return nil
+        }
+        do {
+            let link = try await GoogleDriveUploadService.upload(filePath: fileURL.path)
+            print("[CallRecordingCoordinator] ✅ запис завантажено в Google Drive — \(link)")
+            return link
+        } catch {
+            print("[CallRecordingCoordinator] ❌ не вдалося завантажити запис у Google Drive: \(error)")
+            return nil
+        }
+    }
+
     /// Sends a just-finished recording to the configured Telegram chat/topic.
     /// Silently skips (with a log line, not an error) when Telegram isn't
     /// configured at all — this is opt-in automation, not a hard requirement
-    /// for local recording to work.
-    private func uploadToTelegram(fileURL: URL) async {
+    /// for local recording to work. `driveUrl` (Phase 5.3) is nil whenever
+    /// Drive upload was skipped or failed — `buildCaption` already treats a
+    /// nil/empty driveUrl as "omit that caption line", so no extra branching
+    /// is needed here.
+    private func uploadToTelegram(fileURL: URL, driveUrl: String?) async {
         guard AppSettings.shared.telegramChatId != nil else {
             print("[CallRecordingCoordinator] ℹ️ telegramChatId не налаштовано — пропускаю автоматичну відправку в Telegram.")
             return
@@ -141,6 +184,7 @@ actor CallRecordingCoordinator {
             let messageId = try await TelegramUploadService.sendRecording(
                 filePath: fileURL.path,
                 caption: "Запис дзвінку: \(fileName)",
+                driveUrl: driveUrl,
                 client: client
             )
             print("[CallRecordingCoordinator] ✅ запис надіслано в Telegram — messageId=\(messageId).")
