@@ -5,8 +5,8 @@ import Foundation
 /// auth (JWT sign + token exchange, `GoogleServiceAccountAuth`) and Drive
 /// folder access both work end to end against the real Drive API, as the
 /// first checkpoint before any upload code exists (Step 5.2).
-enum GoogleDriveFolderAccessSmokeTest {
-    static func run() async {
+public enum GoogleDriveFolderAccessSmokeTest {
+    public static func run() async {
         guard let folderId = AppSettings.shared.googleDriveFolderId else {
             print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
             return

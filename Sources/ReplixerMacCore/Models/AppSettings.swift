@@ -11,16 +11,19 @@ import Foundation
 /// used directly before this phase) and can be changed by hand-editing the
 /// JSON file at `AppSettings.store.url` — the file is created with defaults
 /// on first run specifically so there's something to find and edit.
-final class AppSettings: Codable {
-    static let shared = AppSettings.load()
+public final class AppSettings: Codable {
+    public static let shared = AppSettings.load()
 
-    static let store = JSONStore<AppSettings>(url:
+    public static let store = JSONStore<AppSettings>(url:
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ReplixerMac", isDirectory: true)
             .appendingPathComponent("settings.json")
     )
 
-    var managerName: String {
+    // Read externally (main.swift logs it at startup); no external caller
+    // sets it yet (no settings UI until Phase 7), so the setter stays
+    // internal rather than being opened up unnecessarily.
+    public internal(set) var managerName: String {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -94,7 +97,7 @@ final class AppSettings: Codable {
         self.googleDriveFolderId = googleDriveFolderId
     }
 
-    required init(from decoder: Decoder) throws {
+    public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // decodeIfPresent (not decode) so adding a new field later can't
         // break loading an older settings.json that predates it.
@@ -107,7 +110,7 @@ final class AppSettings: Codable {
         googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(managerName, forKey: .managerName)
         try container.encode(telegramApiId, forKey: .telegramApiId)
@@ -151,7 +154,7 @@ final class AppSettings: Codable {
     /// lost. Unused until a later phase actually mutates settings at
     /// runtime, but wired into the signal handlers now (main.swift) so it
     /// doesn't need to be remembered later.
-    func flush() {
+    public func flush() {
         AppSettings.store.saveNow(self)
     }
 }

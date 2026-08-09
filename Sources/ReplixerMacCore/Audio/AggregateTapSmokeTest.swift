@@ -7,7 +7,7 @@ import Foundation
 /// callback invocations happen and the size of the first buffer seen. No
 /// file writing yet — that's Step D, once we know audio is actually
 /// flowing through the callback.
-enum AggregateTapSmokeTest {
+public enum AggregateTapSmokeTest {
     enum StepError: Error {
         case defaultOutputDeviceUIDUnavailable
         case aggregateDeviceCreationFailed(OSStatus)
@@ -15,7 +15,7 @@ enum AggregateTapSmokeTest {
         case deviceStartFailed(OSStatus)
     }
 
-    static func run(processObjectID: AudioObjectID, duration: TimeInterval = 8) {
+    public static func run(processObjectID: AudioObjectID, duration: TimeInterval = 8) {
         print("[AggregateTapSmokeTest] creating tap for process object \(processObjectID)...")
 
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])

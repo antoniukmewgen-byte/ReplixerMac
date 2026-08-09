@@ -19,8 +19,8 @@ import TDLibKit
 /// folders on this account, both of which TDLib treats as separate chat
 /// lists (`.chatListArchive` / `.chatListFolder`) that `.chatListMain`
 /// alone never surfaces. This now walks all three.
-enum TelegramChatListSmokeTest {
-    static func run() async {
+public enum TelegramChatListSmokeTest {
+    public static func run() async {
         let authClient = TelegramAuthClient()
         do {
             try await authClient.login()

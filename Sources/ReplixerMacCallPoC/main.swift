@@ -1,4 +1,5 @@
 import Foundation
+import ReplixerMacCore
 
 let formatter = DateFormatter()
 formatter.dateFormat = "HH:mm:ss"

@@ -21,7 +21,7 @@ import Foundation
 /// `MessengerProcessNames.cs`). If that turns out to be the case here too,
 /// this enum's `matching(processName:)` is the place to add an analogous
 /// fallback — not addressed yet since it needs a real device test first.
-enum SupportedMessenger: String, CaseIterable {
+public enum SupportedMessenger: String, CaseIterable {
     case telegram = "Telegram"
     case whatsApp = "WhatsApp"
     case viber = "Viber"

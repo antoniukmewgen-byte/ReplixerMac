@@ -26,8 +26,8 @@ enum RecordingStatus: String, Codable {
 /// actually populate at the time — Drive/Telegram upload-tracking fields
 /// were added in Phase 6 now that those integrations (Phase 4/5) exist to
 /// populate them. No Kommo field yet (Phase 10, not built).
-struct RecordingEntry: Codable, Identifiable {
-    let id: UUID
+public struct RecordingEntry: Codable, Identifiable {
+    public let id: UUID
     let platform: String
     let startedAt: Date
     var filePath: String?
@@ -80,7 +80,7 @@ struct RecordingEntry: Codable, Identifiable {
     // don't exist in any recordings.json written before Phase 6, and
     // synthesized Decodable would hard-fail on every pre-Phase-6 entry
     // rather than defaulting them.
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         platform = try container.decode(String.self, forKey: .platform)
@@ -94,7 +94,7 @@ struct RecordingEntry: Codable, Identifiable {
         telegramFailed = try container.decodeIfPresent(Bool.self, forKey: .telegramFailed) ?? false
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(platform, forKey: .platform)

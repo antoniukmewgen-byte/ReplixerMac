@@ -15,7 +15,7 @@ import Foundation
 /// Phase 1.5's CallRecordingCoordinator can drive it from real call
 /// start/end events instead of a fixed duration. `run(processObjectID:)` is
 /// kept as a smoke-test convenience wrapper around that same lifecycle.
-enum AudioMixerEncoder {
+public enum AudioMixerEncoder {
     enum StepError: Error {
         case tapCreationFailed(OSStatus)
         case defaultInputDeviceUnavailable
@@ -112,7 +112,7 @@ enum AudioMixerEncoder {
     /// Step 1.4 smoke-test entry point (`--mix-smoke-test`): start, sleep for
     /// `duration`, stop. Writes to a temp file since it isn't tied to a real
     /// call's lifecycle.
-    static func run(processObjectID: AudioObjectID, duration: TimeInterval = 60) {
+    public static func run(processObjectID: AudioObjectID, duration: TimeInterval = 60) {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ReplixerMac-Mixed-\(Int(Date().timeIntervalSince1970)).m4a")
 

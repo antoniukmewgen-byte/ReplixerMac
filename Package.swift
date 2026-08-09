@@ -18,12 +18,30 @@ let package = Package(
         .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.66-022d6020")
     ],
     targets: [
-        .executableTarget(
-            name: "ReplixerMacCallPoC",
+        // Phase 7.1: library target holding all real logic (audio capture,
+        // Telegram/Drive upload, settings/history persistence, etc.) — split
+        // out of the former single executable so a second executable
+        // (ReplixerMacApp) can share it without duplicating code.
+        .target(
+            name: "ReplixerMacCore",
             dependencies: [
                 .product(name: "TDLibKit", package: "TDLibKit")
             ],
+            path: "Sources/ReplixerMacCore"
+        ),
+        // CLI entry point / smoke-test harness — now just main.swift, with
+        // all actual logic living in ReplixerMacCore.
+        .executableTarget(
+            name: "ReplixerMacCallPoC",
+            dependencies: ["ReplixerMacCore"],
             path: "Sources/ReplixerMacCallPoC"
+        ),
+        // Phase 7.1 scaffolding: minimal SwiftUI app shell, not yet wired up
+        // to ReplixerMacCore's functionality.
+        .executableTarget(
+            name: "ReplixerMacApp",
+            dependencies: ["ReplixerMacCore"],
+            path: "Sources/ReplixerMacApp"
         )
     ]
 )

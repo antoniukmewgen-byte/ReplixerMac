@@ -8,7 +8,7 @@ import Foundation
 /// opened in QuickTime/Audacity and checked for actual, audible
 /// output-side audio. This is the final verification criterion from the
 /// original Phase 1.1 plan.
-enum TapFileWriteSmokeTest {
+public enum TapFileWriteSmokeTest {
     enum StepError: Error {
         case tapFormatUnavailable
         case defaultOutputDeviceUIDUnavailable
@@ -18,7 +18,7 @@ enum TapFileWriteSmokeTest {
         case deviceStartFailed(OSStatus)
     }
 
-    static func run(processObjectID: AudioObjectID, duration: TimeInterval = 10) {
+    public static func run(processObjectID: AudioObjectID, duration: TimeInterval = 10) {
         print("[TapFileWriteSmokeTest] creating tap for process object \(processObjectID)...")
 
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])

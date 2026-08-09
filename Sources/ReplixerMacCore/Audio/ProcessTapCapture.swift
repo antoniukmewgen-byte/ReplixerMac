@@ -8,8 +8,8 @@ import Foundation
 /// single biggest unknown (does the macOS 14.2+ process-tap API even
 /// compile and succeed the way we expect) before building anything on
 /// top of it.
-enum ProcessTapSmokeTest {
-    static func findTelegramProcessObjectID() -> AudioObjectID? {
+public enum ProcessTapSmokeTest {
+    public static func findTelegramProcessObjectID() -> AudioObjectID? {
         findProcessObjectID(for: .telegram)
     }
 
@@ -35,7 +35,7 @@ enum ProcessTapSmokeTest {
         return nil
     }
 
-    static func run(processObjectID: AudioObjectID) {
+    public static func run(processObjectID: AudioObjectID) {
         print("[ProcessTapSmokeTest] creating tap for process object \(processObjectID)...")
 
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])

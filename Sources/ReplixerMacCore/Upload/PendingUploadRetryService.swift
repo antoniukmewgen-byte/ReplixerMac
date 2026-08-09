@@ -19,17 +19,17 @@ import Foundation
 /// `Interlocked`-guarded `_isTicking` flag — a `while` loop that `await`s
 /// the previous tick's full completion before sleeping again can't overlap
 /// itself, so no separate re-entrancy guard is needed here.
-final class PendingUploadRetryService {
+public final class PendingUploadRetryService {
     private static let intervalNanoseconds: UInt64 = 10_000_000_000 // 10s, Windows-parity interval
 
     private let coordinator: CallRecordingCoordinator
     private var task: Task<Void, Never>?
 
-    init(coordinator: CallRecordingCoordinator) {
+    public init(coordinator: CallRecordingCoordinator) {
         self.coordinator = coordinator
     }
 
-    func start() {
+    public func start() {
         guard task == nil else { return } // already running
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -48,7 +48,7 @@ final class PendingUploadRetryService {
     /// the *next* sleep/tick from starting, it doesn't need to interrupt an
     /// in-flight one (which is itself driven through the coordinator actor
     /// and will finish on its own).
-    func stop() {
+    public func stop() {
         task?.cancel()
         task = nil
     }

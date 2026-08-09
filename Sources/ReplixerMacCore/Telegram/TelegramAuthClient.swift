@@ -14,7 +14,12 @@ import TDLibKit
 /// internally) — this class owns that single manager and the one
 /// `TDLibClient` built from it, since Phase 4 only ever needs one Telegram
 /// session at a time.
-final class TelegramAuthClient {
+public final class TelegramAuthClient {
+    // Explicit public init required: a public type with no explicit
+    // initializer only gets an internal-access default/memberwise init
+    // synthesized, which main.swift (a different target) can't call.
+    public init() {}
+
     private let manager = TDLibClientManager()
     // Phase 4.2: private(set), not private — the chat-listing/send-message
     // diagnostics need to reuse this same authenticated TDLibClient rather
@@ -62,7 +67,7 @@ final class TelegramAuthClient {
     /// `AppSettings` doesn't have both `telegramApiId`/`telegramApiHash`
     /// set yet (no UI for these until Phase 7 — see AppSettings.swift), or
     /// rethrows whatever TDLib call failed along the way.
-    func login() async throws {
+    public func login() async throws {
         guard let apiId = AppSettings.shared.telegramApiId,
               let apiHash = AppSettings.shared.telegramApiHash else {
             throw TelegramAuthError.missingCredentials
@@ -215,7 +220,7 @@ final class TelegramAuthClient {
     /// TDLib confirms `authorizationStateClosed` for every client, so the
     /// background thread has actually wound down before we pull the rug
     /// out with `exit()`.
-    func shutdown() {
+    public func shutdown() {
         manager.closeClients()
     }
 
@@ -229,7 +234,7 @@ final class TelegramAuthClient {
     }
 }
 
-enum TelegramAuthError: Swift.Error {
+public enum TelegramAuthError: Swift.Error {
     case missingCredentials
     case registrationNotSupported
     case closedBeforeReady

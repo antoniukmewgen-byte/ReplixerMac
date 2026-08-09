@@ -12,7 +12,12 @@ import Foundation
 /// from CallMonitor can't race into a double-start or double-stop (the
 /// exact hazard the plan calls out for Phase 1.6; building on an actor now
 /// avoids having to retrofit one later).
-actor CallRecordingCoordinator {
+public actor CallRecordingCoordinator {
+    // Explicit public init required: an implicit default init on an actor
+    // is always internal-access, even when the actor itself is public —
+    // main.swift (a different target) needs to be able to construct one.
+    public init() {}
+
     private var isRecording = false
     // Phase 2.2: tracks the RecordingHistory entry for the call currently
     // being recorded, so callEnded/shutdown can update its status (saved
@@ -56,7 +61,7 @@ actor CallRecordingCoordinator {
     private var isRetryingUploads = false
     private var retryFinishedContinuations: [CheckedContinuation<Void, Never>] = []
 
-    func callStarted(messenger: SupportedMessenger, processName: String) {
+    public func callStarted(messenger: SupportedMessenger, processName: String) {
         guard !isRecording else {
             print("[CallRecordingCoordinator] ⚠️ дзвінок вже записується, ігнорую повторний onCallStarted.")
             return
@@ -86,7 +91,7 @@ actor CallRecordingCoordinator {
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
     }
 
-    func callEnded(messenger: SupportedMessenger, processName: String) {
+    public func callEnded(messenger: SupportedMessenger, processName: String) {
         guard isRecording else {
             print("[CallRecordingCoordinator] ⚠️ onCallEnded без активного запису — ігнорую.")
             return
@@ -109,7 +114,7 @@ actor CallRecordingCoordinator {
     /// (see TelegramAuthClient.shutdown()'s comments). Phase 6: also waits
     /// for an in-flight `retryPendingUploads()` for the same reason — see
     /// the `isRetryingUploads` doc comment above.
-    func shutdown() async {
+    public func shutdown() async {
         if isRecording {
             print("[CallRecordingCoordinator] 🛑 завершення роботи під час активного запису — коректно зупиняю...")
             finishRecording()

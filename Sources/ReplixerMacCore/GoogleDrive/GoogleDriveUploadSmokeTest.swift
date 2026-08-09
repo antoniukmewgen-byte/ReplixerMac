@@ -5,8 +5,8 @@ import Foundation
 /// end to end against a real local file, before `CallRecordingCoordinator`
 /// gets wired up to call it automatically alongside the Telegram upload
 /// (Step 5.3).
-enum GoogleDriveUploadSmokeTest {
-    static func run(filePath: String) async {
+public enum GoogleDriveUploadSmokeTest {
+    public static func run(filePath: String) async {
         guard FileManager.default.fileExists(atPath: filePath) else {
             print("[\(timestamp())] ❌ Файл не знайдено: \(filePath)")
             return

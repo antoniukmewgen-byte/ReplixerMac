@@ -13,10 +13,10 @@ import Foundation
 /// handling via installTap produced a persistent echo/crackle artifact
 /// across several different downmix strategies, all sharing the same
 /// underlying tap-based capture path.
-enum MicrophoneSmokeTest {
+public enum MicrophoneSmokeTest {
     private static var recorder: AVAudioRecorder?
 
-    static func run(duration: TimeInterval = 10) {
+    public static func run(duration: TimeInterval = 10) {
         requestPermission { granted in
             guard granted else {
                 print("[MicrophoneSmokeTest] ❌ дозвіл на мікрофон не надано.")

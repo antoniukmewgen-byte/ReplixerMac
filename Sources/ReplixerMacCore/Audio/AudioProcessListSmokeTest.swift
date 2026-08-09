@@ -13,8 +13,8 @@ import Foundation
 /// process object that has input or output IO active, with its real name
 /// and bundle ID, so the actual name can be read off directly instead of
 /// guessed — start it, then place the call during the scan window.
-enum AudioProcessListSmokeTest {
-    static func run(duration: TimeInterval = 45) {
+public enum AudioProcessListSmokeTest {
+    public static func run(duration: TimeInterval = 45) {
         print("[AudioProcessListSmokeTest] сканую CoreAudio-процеси з активним input/output кожну секунду \(Int(duration))с — зроби дзвінок Viber/WhatsApp зараз, або просто увімкни/вимкни мікрофон/динамік у застосунку, щоб він з'явився нижче.")
         let deadline = Date().addingTimeInterval(duration)
         while Date() < deadline {

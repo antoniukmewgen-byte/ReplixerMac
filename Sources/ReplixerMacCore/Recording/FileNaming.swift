@@ -9,7 +9,7 @@ import Foundation
 /// macOS account name (`NSUserName()`) as a placeholder, since it's the
 /// closest available stand-in for "whoever is using this Mac" until real
 /// settings exist.
-enum FileNaming {
+public enum FileNaming {
     static var recordingsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ReplixerMac", isDirectory: true)
@@ -72,7 +72,7 @@ enum FileNaming {
     /// CleanupStaleTempFiles behavior. Safe to call unconditionally at
     /// startup: an `.inprogress` file is by definition never a properly
     /// finalized recording, so there's nothing worth salvaging from it.
-    static func cleanupStalePartialFiles() {
+    public static func cleanupStalePartialFiles() {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: recordingsDirectory, includingPropertiesForKeys: nil
         ) else { return }

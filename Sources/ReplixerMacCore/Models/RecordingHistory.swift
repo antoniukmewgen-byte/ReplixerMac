@@ -11,16 +11,16 @@ import Foundation
 /// actor, so calls are already serialized by the time they get here. If a
 /// future phase calls this from elsewhere too, that assumption needs
 /// revisiting.
-final class RecordingHistory {
-    static let shared = RecordingHistory()
+public final class RecordingHistory {
+    public static let shared = RecordingHistory()
 
-    static let store = JSONStore<[RecordingEntry]>(url:
+    public static let store = JSONStore<[RecordingEntry]>(url:
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ReplixerMac", isDirectory: true)
             .appendingPathComponent("recordings.json")
     )
 
-    private(set) var entries: [RecordingEntry]
+    public private(set) var entries: [RecordingEntry]
 
     private init() {
         switch RecordingHistory.store.load() {
@@ -54,7 +54,7 @@ final class RecordingHistory {
     /// Returns the number of entries reconciled, purely so main.swift's
     /// startup log can report it — no other caller needs the count.
     @discardableResult
-    func reconcileDanglingRecordings() -> Int {
+    public func reconcileDanglingRecordings() -> Int {
         var count = 0
         for index in entries.indices where entries[index].status == .recording {
             entries[index].status = .error
@@ -144,7 +144,7 @@ final class RecordingHistory {
 
     /// Forces any pending debounced save to happen immediately — call
     /// before process exit, same reasoning as AppSettings.flush().
-    func flush() {
+    public func flush() {
         RecordingHistory.store.saveNow(entries)
     }
 }

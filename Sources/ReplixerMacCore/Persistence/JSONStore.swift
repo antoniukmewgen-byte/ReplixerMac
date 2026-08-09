@@ -15,8 +15,8 @@ import Foundation
 /// Debounced: rapid successive changes (e.g. several settings edited in a
 /// row) coalesce into a single disk write 500ms after the last change,
 /// matching the interval Replixer's Windows `AppSettings.cs` uses.
-final class JSONStore<Value: Codable> {
-    let url: URL
+public final class JSONStore<Value: Codable> {
+    public let url: URL
 
     private let queue = DispatchQueue(label: "JSONStore")
     private var pendingWorkItem: DispatchWorkItem?

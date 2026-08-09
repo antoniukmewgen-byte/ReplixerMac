@@ -6,8 +6,8 @@ import TDLibKit
 /// actual send path (InputMessageAudio + caption + retry) against a real
 /// local recording, before `CallRecordingCoordinator` gets wired up to call
 /// it automatically once a call ends.
-enum TelegramSendAudioSmokeTest {
-    static func run(filePath: String) async {
+public enum TelegramSendAudioSmokeTest {
+    public static func run(filePath: String) async {
         guard FileManager.default.fileExists(atPath: filePath) else {
             print("[\(timestamp())] ❌ Файл не знайдено: \(filePath)")
             return

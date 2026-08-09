@@ -15,7 +15,7 @@ import Foundation
 /// sub-device IOProc — the same low-level path that previously produced an
 /// echo/crackle artifact before the AVAudioRecorder rewrite. Listen to the
 /// mic-side .wav specifically for that artifact when verifying this step.
-enum DualStreamCapture {
+public enum DualStreamCapture {
     enum StepError: Error {
         case defaultInputDeviceUnavailable
         case micStreamFormatUnavailable
@@ -26,7 +26,7 @@ enum DualStreamCapture {
         case deviceStartFailed(OSStatus)
     }
 
-    static func run(processObjectID: AudioObjectID, duration: TimeInterval = 15) {
+    public static func run(processObjectID: AudioObjectID, duration: TimeInterval = 15) {
         print("[DualStreamCapture] creating tap for process object \(processObjectID)...")
 
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])

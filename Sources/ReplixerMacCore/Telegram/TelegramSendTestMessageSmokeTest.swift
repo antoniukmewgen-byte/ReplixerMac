@@ -8,8 +8,8 @@ import TDLibKit
 /// transfer, captions, retry-on-failure — no need to debug all of that at
 /// once). Mirrors `TelegramChatListSmokeTest`'s "reuse the already-
 /// authenticated client" shape.
-enum TelegramSendTestMessageSmokeTest {
-    static func run() async {
+public enum TelegramSendTestMessageSmokeTest {
+    public static func run() async {
         guard let chatId = AppSettings.shared.telegramChatId else {
             print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено telegramChatId — дізнайся id потрібного чату через --telegram-list-chats-smoke-test і впиши його в settings.json.")
             return

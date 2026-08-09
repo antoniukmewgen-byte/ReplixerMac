@@ -13,15 +13,20 @@ import Foundation
 /// time (first match wins per poll, matching Windows' single
 /// `_isCallActive`/`_activeApp`); two different messengers ringing
 /// simultaneously isn't a scenario either build handles.
-final class CallMonitor {
-    var onCallStarted: ((_ messenger: SupportedMessenger, _ processName: String) -> Void)?
-    var onCallEnded: ((_ messenger: SupportedMessenger, _ processName: String) -> Void)?
+public final class CallMonitor {
+    // Explicit public init required: an implicit default init is always
+    // internal-access, even on a public class — main.swift (a different
+    // target) needs to be able to construct one.
+    public init() {}
+
+    public var onCallStarted: ((_ messenger: SupportedMessenger, _ processName: String) -> Void)?
+    public var onCallEnded: ((_ messenger: SupportedMessenger, _ processName: String) -> Void)?
 
     private var activeMessenger: SupportedMessenger?
     private var pollTimer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "com.replixer.call-monitor")
 
-    func start() {
+    public func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0)
         timer.setEventHandler { [weak self] in self?.poll() }
