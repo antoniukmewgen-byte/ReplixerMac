@@ -41,7 +41,27 @@ let package = Package(
         .executableTarget(
             name: "ReplixerMacApp",
             dependencies: ["ReplixerMacCore"],
-            path: "Sources/ReplixerMacApp"
+            path: "Sources/ReplixerMacApp",
+            // Phase 8.3: embeds Info.plist directly into the executable via
+            // a `__TEXT,__info_plist` Mach-O section — the standard trick
+            // for a bare SwiftPM executable (no .xcodeproj/.app bundle) to
+            // carry real Info.plist keys. Covers LSUIElement (Dock-hiding)
+            // and NSMicrophoneUsageDescription even when run straight out
+            // of Xcode's debug DerivedData output. Does NOT cover
+            // SMAppService login-item registration — that needs an actual
+            // Contents/Info.plist inside a real .app bundle, which is what
+            // Scripts/build-app-bundle.sh produces separately for testing
+            // AutoStartManager. `unsafeFlags` is fine here: nothing else in
+            // this package (or outside it) depends on ReplixerMacApp as a
+            // library.
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/ReplixerMacApp/Info.plist"
+                ])
+            ]
         )
     ]
 )

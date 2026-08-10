@@ -27,10 +27,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // See this class's doc comment for why this steals focus — SwiftPM
-        // executables launched via Xcode's debugger don't get the
-        // automatic frontmost-activation Finder-launched apps get for free.
-        NSApp.setActivationPolicy(.regular)
+        // Phase 8.3: `.accessory`, not `.regular` — matches Info.plist's
+        // LSUIElement=true (menu-bar-only, no Dock icon/Cmd+Tab entry, see
+        // StatusItemController). Explicit here rather than left to
+        // Info.plist alone: this line used to hardcode `.regular` (pre-
+        // Phase-8.3, before there was an Info.plist to read LSUIElement
+        // from at all) specifically because SwiftPM executables launched
+        // via Xcode's debugger don't get the automatic frontmost-activation
+        // Finder-launched apps get for free — that reasoning still applies,
+        // it just needs the accessory-compatible target now. Accessory apps
+        // can still `.activate`/own a key window; they just don't reserve a
+        // Dock slot.
+        NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
 
         statusItemController = StatusItemController()

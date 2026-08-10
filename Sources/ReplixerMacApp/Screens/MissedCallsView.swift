@@ -10,7 +10,3 @@ struct MissedCallsView: View {
         PlaceholderScreen(title: "Пропущені дзвінки", systemImage: "phone.down.fill")
     }
 }
-
-#Preview {
-    MissedCallsView()
-}

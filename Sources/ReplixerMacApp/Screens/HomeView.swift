@@ -157,7 +157,3 @@ private struct RecentActivityRow: View {
         }
     }
 }
-
-#Preview {
-    HomeView()
-}

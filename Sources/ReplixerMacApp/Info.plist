@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Phase 8.3 — first real Info.plist this project has ever had. Two
+         consumers, two different embedding paths, see Package.swift's
+         linkerSettings comment and Scripts/build-app-bundle.sh:
+         (1) embedded directly into the raw Xcode-debug executable via a
+             `__TEXT,__info_plist` linker section — enough for LSUIElement
+             and NSMicrophoneUsageDescription, which AppKit/TCC read straight
+             off the running process's own Mach-O;
+         (2) copied verbatim into Contents/Info.plist of the packaged
+             ReplixerMac.app for a real bundle — needed for SMAppService
+             (AutoStartManager) to register a login item at all, which
+             the raw-executable-plus-linker-section form can't satisfy
+             (SMAppServiceErrorDomain Code=1 "Operation not permitted" —
+             confirmed on a real build). -->
+    <key>CFBundleIdentifier</key>
+    <string>com.replixer.ReplixerMac</string>
+    <key>CFBundleName</key>
+    <string>ReplixerMac</string>
+    <key>CFBundleDisplayName</key>
+    <string>ReplixerMac</string>
+    <key>CFBundleExecutable</key>
+    <string>ReplixerMacApp</string>
+    <!-- TelegramUploadService.appVersion reads this back via
+         Bundle.main.infoDictionary — keep the two in sync when bumping. -->
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <!-- Phase 8.3: menu-bar-only, no Dock icon/Cmd+Tab entry — Windows-tray
+         parity (StatusItemController is the way back in). AppDelegate's
+         explicit `NSApp.setActivationPolicy(.accessory)` mirrors this; if
+         that line ever drifts back to `.regular` it silently overrides
+         this key at runtime, so keep the two in sync. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Required for AVAudioEngine.inputNode/AVAudioApplication's TCC
+         prompt (Phase 1.2) to show at all instead of silently failing —
+         previously relied on whatever default Xcode's throwaway
+         SPM-executable wrapper synthesized. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ReplixerMac потребує доступ до мікрофона, щоб записувати твою сторону розмови під час дзвінків.</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

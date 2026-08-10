@@ -80,7 +80,3 @@ struct SetupWizardView: View {
         onFinish()
     }
 }
-
-#Preview {
-    SetupWizardView(onFinish: {})
-}

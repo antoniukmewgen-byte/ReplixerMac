@@ -119,7 +119,3 @@ private struct RecordingRow: View {
         return formatter
     }()
 }
-
-#Preview {
-    RecordingsView()
-}

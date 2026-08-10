@@ -15,11 +15,16 @@ import AVFoundation
 /// one-retry-then-give-up shape here doesn't need to distinguish *why* the
 /// send failed the way the Windows original does.
 enum TelegramUploadService {
-    // No Info.plist/bundle yet (that's Phase 1.1's risk #1 / Phase 7's
-    // bundling) to read a real app/build version from — hardcoded
-    // placeholder for the caption's version tag, update alongside whatever
-    // versioning scheme Phase 7 lands on.
-    private static let appVersion = "0.1.0-poc"
+    // Phase 8.3: reads the real CFBundleShortVersionString now that
+    // Sources/ReplixerMacApp/Info.plist exists (embedded via Package.swift's
+    // linker section, or a real Contents/Info.plist once packaged by
+    // Scripts/build-app-bundle.sh — Bundle.main resolves either form the
+    // same way). Falls back to the old placeholder for contexts with no
+    // Info.plist at all, namely ReplixerMacCallPoC and unit tests, which
+    // link ReplixerMacCore directly without ReplixerMacApp's Info.plist.
+    private static var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0-poc"
+    }
 
     enum UploadError: Swift.Error {
         case missingChatId
