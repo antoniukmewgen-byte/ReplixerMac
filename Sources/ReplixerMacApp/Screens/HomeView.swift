@@ -2,21 +2,22 @@ import SwiftUI
 import Combine
 import ReplixerMacCore
 
-/// Phase 7.5 — Windows parity source: `HomeViewModel` (699 lines) +
-/// `HomePage.xaml`, scoped down hard to what mac's pipeline actually
-/// supports today. Recording here is fully automatic — `CallMonitor`
-/// detects a call and `CallRecordingCoordinator` starts/stops it with no
-/// human in the loop — so there's no manual start/stop button to wire
-/// (Windows' `IdleCallViewModel.RecordManuallyCommand`/
-/// `ActiveCallViewModel.StopCommand` assume a human can drive start/stop,
-/// which mac's coordinator API doesn't expose), no call-confirmation dialog
-/// (`CallDialogViewModel`), no report form (`CallReportViewModel` —
-/// Phase 6/10-specific, not built), and no missed-calls tracking
+/// Phase 7.5 (manual start/stop + confirm dialog added Phase 11.1/11.2) —
+/// Windows parity source: `HomeViewModel` (699 lines) + `HomePage.xaml`,
+/// still scoped down from it: call-confirmation now exists
+/// (`CallConfirmRequestStore`/`CallConfirmView`, wired from `CallMonitor` in
+/// `ReplixerMacApp`'s `AppDelegate` — Windows parity: `CallDialogViewModel`)
+/// and manual start/stop now exists (the button below, Windows parity:
+/// `IdleCallViewModel.RecordManuallyCommand`/`ActiveCallViewModel
+/// .StopCommand`), but there's still no report form draft/interrupt
+/// recovery (Windows' `CallReportViewModel.CaptureDraft`/`RecordingStatus
+/// .Draft` — planned as Phase 11.3), no per-entry retry/edit-report actions
+/// (Phase 11.4), and no missed-calls tracking
 /// (`MissedCallReportViewModel`/`MissedCallsViewModel` — Phase 10, not
-/// built) to fold into "ОСТАННІ ЗАПИСИ". So this screen is just two things:
-/// a live "is a call being recorded right now" status card, and the 4 most
-/// recent `RecordingEntry` rows (no missed-call entries to interleave,
-/// unlike Windows' `RecentActivity`).
+/// built) to fold into "ОСТАННІ ЗАПИСИ". So this screen is: a live "is a
+/// call being recorded right now" status card (now with a manual
+/// start/stop button), and the 4 most recent `RecordingEntry` rows (no
+/// missed-call entries to interleave, unlike Windows' `RecentActivity`).
 struct HomeView: View {
     // Mirrors of ReplixerMacCore's two lock-protected snapshots — same
     // "local @State, refreshed via a plain NotificationCenter post"
@@ -25,6 +26,11 @@ struct HomeView: View {
     @State private var status = RecordingStatusStore.shared.status
     @State private var recentEntries: [RecordingEntry] = Array(RecordingHistory.shared.entries.prefix(4))
     @State private var now = Date()
+    // Phase 11.2: set when `manualStart()` reports something other than
+    // `.started`/`.alreadyRecording` — drives the alert below. `nil` means
+    // "no alert showing", matching the `Binding`-from-Optional pattern used
+    // elsewhere in this app (e.g. ContentView's sheet(item:) bindings).
+    @State private var manualStartError: String?
 
     private let statusPublisher = NotificationCenter.default
         .publisher(for: RecordingStatusStore.didChangeNotification)
@@ -47,6 +53,23 @@ struct HomeView: View {
         .onReceive(statusPublisher) { _ in status = RecordingStatusStore.shared.status }
         .onReceive(historyPublisher) { _ in recentEntries = Array(RecordingHistory.shared.entries.prefix(4)) }
         .onReceive(elapsedTimer) { date in now = date }
+        // Phase 11.2 — Windows parity: `ErrorReporter.Report("RECORDING_START", ...)`
+        // inside `HomeViewModel.StartRecording`'s failure branch, surfaced
+        // here as a plain alert since mac has no error-reporting bot yet
+        // (Phase 5 of the gap list — this alert is the whole notification,
+        // not just a supplement to one).
+        .alert(
+            "Не вдалося почати запис",
+            isPresented: Binding(
+                get: { manualStartError != nil },
+                set: { isPresented in if !isPresented { manualStartError = nil } }
+            ),
+            presenting: manualStartError
+        ) { _ in
+            Button("Гаразд", role: .cancel) { manualStartError = nil }
+        } message: { errorText in
+            Text(errorText)
+        }
     }
 
     private var statusCard: some View {
@@ -72,10 +95,46 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            manualActionButton
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // Phase 11.2 — Windows parity: `IdleCallViewModel.RecordManuallyCommand`/
+    // `ActiveCallViewModel.StopCommand`. `CallRecordingCoordinator.appInstance`
+    // is nil only in contexts this view never actually runs in (unit tests,
+    // the headless PoC target) — the `if let` just avoids a force-unwrap
+    // rather than guarding against a real runtime case.
+    @ViewBuilder
+    private var manualActionButton: some View {
+        if status.isRecording {
+            Button("Зупинити запис") {
+                guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+                Task { await coordinator.manualStop() }
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button("Почати запис вручну") {
+                startManually()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func startManually() {
+        guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+        Task {
+            switch await coordinator.manualStart() {
+            case .started, .alreadyRecording:
+                break
+            case .noMessengerRunning:
+                manualStartError = "Не знайшов жодного підтримуваного месенджера (Telegram/WhatsApp/Viber/Ringostat) серед запущених застосунків. Відкрий один із них і спробуй ще раз."
+            case .failed:
+                manualStartError = "Не вдалося запустити запис. Перевір дозвіл мікрофона в Налаштуваннях системи."
+            }
+        }
     }
 
     private var elapsedTimeText: String {

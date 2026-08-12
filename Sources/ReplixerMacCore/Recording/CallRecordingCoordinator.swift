@@ -18,6 +18,20 @@ public actor CallRecordingCoordinator {
     // main.swift (a different target) needs to be able to construct one.
     public init() {}
 
+    /// Phase 11.2: `HomeView`'s manual start/stop button (SwiftUI,
+    /// ReplixerMacApp) needs a reference to the *one* coordinator instance
+    /// the running app actually owns. Deliberately not a `.shared`
+    /// singleton the way `RecordingHistory`/`AppSettings`/etc. are —
+    /// `CallRecordingCoordinator` is still meant to be a plain instance
+    /// `ReplixerMacCallPoC/main.swift` can construct its own separate copy
+    /// of as a UI-less runner (see `ReplixerMacApp.swift`'s `AppDelegate`
+    /// doc comment on why the two never run at once against the same user).
+    /// This is just a settable slot `AppDelegate` populates once at launch,
+    /// left `nil` for the PoC target (which never reads it) and for any
+    /// unit-test context that constructs a coordinator without an app around
+    /// it.
+    public static var appInstance: CallRecordingCoordinator?
+
     private var isRecording = false
     // Phase 2.2: tracks the RecordingHistory entry for the call currently
     // being recorded, so callEnded/shutdown can update its status (saved
@@ -79,18 +93,100 @@ public actor CallRecordingCoordinator {
             return
         }
 
+        _ = beginRecording(platform: messenger.rawValue, processObjectID: processObjectID)
+    }
+
+    public func callEnded(messenger: SupportedMessenger, processName: String) async {
+        guard isRecording else {
+            print("[CallRecordingCoordinator] ⚠️ onCallEnded без активного запису — ігнорую.")
+            return
+        }
+
+        await finishRecording(requestReport: true)
+        print("[CallRecordingCoordinator] ⏹️ запис зупинено.")
+    }
+
+    /// Phase 11.2 — Windows parity: `HomeViewModel.ManualStartRecording`.
+    /// Windows doesn't need to resolve *which* app is calling for a manual
+    /// start (system-wide WASAPI loopback captures whatever's making sound),
+    /// but mac's CoreAudio process-tap capture always targets one specific
+    /// process — there's no "record whatever's active" fallback. Resolves
+    /// that by probing every `SupportedMessenger` via the same
+    /// `ProcessTapSmokeTest.findProcessObjectID` lookup `callStarted` uses,
+    /// except here against *all* of them rather than one `CallMonitor`
+    /// already identified via its mic+speaker-active heuristic — a manual
+    /// start is explicitly "the user says a call is happening right now", so
+    /// merely being a running process (no active-IO requirement) is enough
+    /// to target it.
+    public enum ManualStartOutcome: Equatable, Sendable {
+        case started(platform: String)
+        case alreadyRecording
+        case noMessengerRunning
+        case failed
+    }
+
+    public func manualStart() -> ManualStartOutcome {
+        guard !isRecording else { return .alreadyRecording }
+
+        guard let match = SupportedMessenger.allCases
+            .compactMap({ messenger -> (SupportedMessenger, AudioObjectID)? in
+                ProcessTapSmokeTest.findProcessObjectID(for: messenger).map { (messenger, $0) }
+            })
+            .first
+        else {
+            print("[CallRecordingCoordinator] ⚠️ ручний старт: жоден підтримуваний месенджер не запущений.")
+            return .noMessengerRunning
+        }
+
+        guard beginRecording(platform: match.0.rawValue, processObjectID: match.1) else {
+            return .failed
+        }
+        return .started(platform: match.0.rawValue)
+    }
+
+    /// Phase 11.2 — Windows parity: `HomeViewModel.ManualStopRecording`.
+    /// Just `finishRecording(requestReport: true)`, same as `callEnded` —
+    /// `finishRecording` never actually reads a messenger/processName (it
+    /// works off the already-stored `currentPlatform`), so there's no
+    /// "synthesize a messenger" step needed for a manual stop the way
+    /// `manualStart` needs one to begin.
+    public func manualStop() async {
+        guard isRecording else {
+            print("[CallRecordingCoordinator] ⚠️ ручний стоп без активного запису — ігнорую.")
+            return
+        }
+
+        await finishRecording(requestReport: true)
+        print("[CallRecordingCoordinator] ⏹️ запис зупинено вручну.")
+    }
+
+    /// Phase 11.1: lets `ReplixerMacApp`'s `CallMonitor` wiring skip showing
+    /// a "call ended — stop recording?" confirm dialog when nothing is
+    /// actually being recorded — e.g. the matching "start recording?" dialog
+    /// for this same detected call was answered "Пропустити". Windows
+    /// parity: `OnCallEnded`'s `if (!_isRecording) { DismissDialog(); return; }`
+    /// guard, just expressed as something the caller checks first rather
+    /// than a no-op inside the callee (mac's confirm dialog has to exist
+    /// *before* deciding whether to call `callEnded` at all, unlike Windows
+    /// where the dialog and the record state live in the same object).
+    public var isRecordingNow: Bool { isRecording }
+
+    /// Shared by `callStarted`/`manualStart` — everything after "we have a
+    /// process object to tap" (create the output dir, start the encoder,
+    /// flip bookkeeping, mirror into `RecordingStatusStore`) is identical
+    /// between an auto-detected and a manually-triggered start.
+    private func beginRecording(platform: String, processObjectID: AudioObjectID) -> Bool {
         do {
             try FileNaming.ensureRecordingsDirectoryExists()
         } catch {
             print("[CallRecordingCoordinator] ❌ не вдалося створити теку записів: \(error)")
-            return
+            return false
         }
 
-        let platform = messenger.rawValue
         let outputURL = FileNaming.recordingURL(platform: platform)
         guard AudioMixerEncoder.start(processObjectID: processObjectID, outputURL: outputURL) else {
             print("[CallRecordingCoordinator] ❌ не вдалося почати запис.")
-            return
+            return false
         }
 
         isRecording = true
@@ -103,16 +199,7 @@ public actor CallRecordingCoordinator {
         // "recording in progress" indicator without polling this actor.
         RecordingStatusStore.shared.update(.init(isRecording: true, platform: platform, startedAt: startedAt))
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
-    }
-
-    public func callEnded(messenger: SupportedMessenger, processName: String) async {
-        guard isRecording else {
-            print("[CallRecordingCoordinator] ⚠️ onCallEnded без активного запису — ігнорую.")
-            return
-        }
-
-        await finishRecording(requestReport: true)
-        print("[CallRecordingCoordinator] ⏹️ запис зупинено.")
+        return true
     }
 
     /// Called from main.swift's SIGINT/SIGTERM handlers so a Ctrl+C or

@@ -6,10 +6,15 @@ import Foundation
 /// "active" when a known messenger process (see `SupportedMessenger`) has
 /// both input (mic) and output (speaker) IO running at the same time — same
 /// heuristic Phase 1 validated for Telegram, now generalized (Phase 3)
-/// across all Windows-parity target apps instead of just one.
+/// across all Windows-parity target apps instead of just one. Once a call is
+/// active, ending it is deliberately a looser check (mic *or* speaker still
+/// running keeps it alive) than starting one (mic *and* speaker) — see
+/// `poll()`'s two branches — so muting the mic mid-call doesn't read as the
+/// call ending.
 ///
 /// Windows parity source: `MicrophoneMonitorService` — including its
-/// single-active-call assumption. Tracks at most one active messenger at a
+/// single-active-call assumption and its asymmetric start-vs-continue
+/// signal combination. Tracks at most one active messenger at a
 /// time (first match wins per poll, matching Windows' single
 /// `_isCallActive`/`_activeApp`); two different messengers ringing
 /// simultaneously isn't a scenario either build handles.
@@ -53,7 +58,11 @@ public final class CallMonitor {
         // input=false/output=true indefinitely after being idle) — bailing
         // out on that first, inactive match would mean never reaching a
         // genuinely active messenger (e.g. WhatsApp) listed after it.
-        var matches: [(messenger: SupportedMessenger, name: String, micAndSpeakerActive: Bool)] = []
+        //
+        // mic/speaker are tracked separately (not pre-ANDed here) because
+        // starting vs. continuing a call use different combinations below —
+        // Windows parity: MicrophoneMonitorService.PollCallback.
+        var matches: [(messenger: SupportedMessenger, name: String, micActive: Bool, speakerActive: Bool)] = []
         for objectID in processIDs {
             guard let pid: pid_t = CAObject.read(objectID, .processPID) else { continue }
             guard let name = processName(for: pid),
@@ -61,17 +70,21 @@ public final class CallMonitor {
 
             let isRunningInput: UInt32 = CAObject.read(objectID, .processIsRunningInput) ?? 0
             let isRunningOutput: UInt32 = CAObject.read(objectID, .processIsRunningOutput) ?? 0
-            matches.append((messenger, name, isRunningInput != 0 && isRunningOutput != 0))
+            matches.append((messenger, name, isRunningInput != 0, isRunningOutput != 0))
         }
 
         if let activeMessenger {
             // A call is already tracked as active — only care whether that
-            // specific messenger still shows mic+speaker both running.
-            // Ignoring other messengers' matches here on purpose: two
-            // different messengers ringing at once isn't handled (see type
-            // doc), so once one is active it keeps priority until it ends.
+            // specific messenger still shows *either* signal running.
+            // Windows parity: PollCallback's continuation branch ends the
+            // call only when `!micActive && !audioActive` — i.e. it takes
+            // losing *both* mic and speaker to call it over, not just one.
+            // Muting the mic mid-call (isRunningInput drops to 0 while the
+            // app keeps rendering the other side's audio) must not read as
+            // "call ended" on its own — using AND here (like the start
+            // check below) would do exactly that.
             if let stillActive = matches.first(where: { $0.messenger == activeMessenger }),
-               stillActive.micAndSpeakerActive {
+               stillActive.micActive || stillActive.speakerActive {
                 return
             }
             self.activeMessenger = nil
@@ -80,9 +93,12 @@ public final class CallMonitor {
             return
         }
 
-        // No call tracked yet — the first messenger found with mic+speaker
-        // both active starts one.
-        if let newlyActive = matches.first(where: { $0.micAndSpeakerActive }) {
+        // No call tracked yet — starting one still requires mic+speaker
+        // *both* active (Windows parity: PollCallback's initial-detection
+        // branch), unlike the continuation check above. Only requiring one
+        // signal here would false-positive on a messenger simply playing a
+        // notification/ringtone sound (speaker-only, no call).
+        if let newlyActive = matches.first(where: { $0.micActive && $0.speakerActive }) {
             activeMessenger = newlyActive.messenger
             onCallStarted?(newlyActive.messenger, newlyActive.name)
         }

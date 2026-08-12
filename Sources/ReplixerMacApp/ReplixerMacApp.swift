@@ -27,6 +27,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Phase 11.2: publish the running app's coordinator instance for
+        // HomeView's manual start/stop button — see
+        // CallRecordingCoordinator.appInstance's doc comment.
+        CallRecordingCoordinator.appInstance = coordinator
+
         // Phase 8.3: `.accessory`, not `.regular` — matches Info.plist's
         // LSUIElement=true (menu-bar-only, no Dock icon/Cmd+Tab entry, see
         // StatusItemController). Explicit here rather than left to
@@ -52,11 +57,53 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[ReplixerMacApp] ⚠️ Знайдено \(reconciledCount) запис(ів) історії, залишених у статусі \"recording\" після аварійного завершення — позначено як \"error\".")
         }
 
+        // Phase 11.1: no longer a direct pass-through — CallMonitor's
+        // detection now asks the user via CallConfirmRequestStore/
+        // CallConfirmView before actually starting/stopping a recording.
+        // Windows parity: HomeViewModel.OnCallDetected/OnCallEnded showing a
+        // CallDialogViewModel first.
+        //
+        // Both closures below guard on two things before ever requesting a
+        // dialog, matching OnCallDetected/OnCallEnded exactly:
+        //   1. `isRecordingNow` — if a recording is already in flight, don't
+        //      ask again. Needed because CallMonitor's mic+speaker heuristic
+        //      can flicker (poll sees IO drop for a beat, fires onCallEnded,
+        //      user picks "Продовжити запис" so the recording keeps going —
+        //      but CallMonitor's own `activeMessenger` is already nil at
+        //      that point, so the very next poll that sees IO active again
+        //      reads as a *new* call and fires onCallStarted). Without this
+        //      guard that re-fire popped the "Почати запис?" dialog back up
+        //      mid-recording, which Windows never does
+        //      (`if (_isRecording) { UpdatePlatform(app); if (!_hasActiveDialog) return; }`).
+        //   2. `CallConfirmRequestStore.shared.pending == nil` — don't stack
+        //      a second dialog request on top of one still awaiting an
+        //      answer (Windows: `if (_hasActiveDialog) return;`). Otherwise
+        //      the earlier request's continuation would be silently
+        //      orphaned (see CallConfirmRequestStore.requestConfirmation's
+        //      doc comment).
         monitor.onCallStarted = { [coordinator] messenger, name in
-            Task { await coordinator.callStarted(messenger: messenger, processName: name) }
+            Task {
+                let alreadyRecording = await coordinator.isRecordingNow
+                guard !alreadyRecording else { return }
+                guard CallConfirmRequestStore.shared.pending == nil else { return }
+                let confirmed = await CallConfirmRequestStore.shared.requestConfirmation(
+                    kind: .start, platform: name)
+                guard confirmed else { return }
+                await coordinator.callStarted(messenger: messenger, processName: name)
+            }
         }
         monitor.onCallEnded = { [coordinator] messenger, name in
-            Task { await coordinator.callEnded(messenger: messenger, processName: name) }
+            Task {
+                // Nothing to confirm-stop if the matching "start recording?"
+                // dialog for this call was answered "Пропустити" — Windows
+                // parity: OnCallEnded's `if (!_isRecording) { DismissDialog(); return; }`.
+                guard await coordinator.isRecordingNow else { return }
+                guard CallConfirmRequestStore.shared.pending == nil else { return }
+                let confirmed = await CallConfirmRequestStore.shared.requestConfirmation(
+                    kind: .end, platform: name, recordingStartedAt: RecordingStatusStore.shared.status.startedAt)
+                guard confirmed else { return }
+                await coordinator.callEnded(messenger: messenger, processName: name)
+            }
         }
         monitor.start()
         pendingUploadRetryService.start()

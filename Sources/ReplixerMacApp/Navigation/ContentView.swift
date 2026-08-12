@@ -25,6 +25,11 @@ struct ContentView: View {
     // request (if any) to present.
     @State private var pendingReport: CallReportRequestStore.PendingRequest?
 
+    // Phase 11.1: same mirror-a-store-into-@State pattern as `pendingReport`
+    // above, driving the "call detected/ended — record?" confirm dialog
+    // instead of the post-call report form.
+    @State private var pendingConfirm: CallConfirmRequestStore.PendingRequest?
+
     // Tracks the window's actual content size so the call-report sheet
     // below can be sized *relative to it* (height = window height minus a
     // fixed margin) instead of a hardcoded constant — the window itself is
@@ -49,6 +54,10 @@ struct ContentView: View {
 
     private let reportDidChangePublisher = NotificationCenter.default
         .publisher(for: CallReportRequestStore.didChangeNotification)
+        .receive(on: DispatchQueue.main)
+
+    private let confirmDidChangePublisher = NotificationCenter.default
+        .publisher(for: CallConfirmRequestStore.didChangeNotification)
         .receive(on: DispatchQueue.main)
 
     var body: some View {
@@ -106,8 +115,25 @@ struct ContentView: View {
         .onReceive(reportDidChangePublisher) { _ in
             pendingReport = CallReportRequestStore.shared.pending
         }
+        // Phase 11.1: the "record this call?"/"stop recording?" confirm
+        // dialog — a small fixed-size card, unlike the report sheet, since
+        // it has no form content to grow into and no reason to track the
+        // window's live size.
+        .sheet(item: $pendingConfirm) { request in
+            CallConfirmView(
+                kind: request.kind,
+                platform: request.platform,
+                recordingStartedAt: request.recordingStartedAt
+            )
+            .frame(width: 360)
+            .interactiveDismissDisabled()
+        }
+        .onReceive(confirmDidChangePublisher) { _ in
+            pendingConfirm = CallConfirmRequestStore.shared.pending
+        }
         .onAppear {
             pendingReport = CallReportRequestStore.shared.pending
+            pendingConfirm = CallConfirmRequestStore.shared.pending
         }
     }
 

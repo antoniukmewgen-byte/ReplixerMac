@@ -2,14 +2,16 @@ import AppKit
 import ReplixerMacCore
 
 /// Phase 8.1 — menu bar presence. Windows-parity source: `TrayViewModel` +
-/// `TrayResources.xaml` (`hardcodet.net` `TaskbarIcon`), but scoped down:
-/// Windows' tray menu has a `RecordCommand` that manually starts/stops
-/// recording (`HomeViewModel.ManualStartRecording/ManualStopRecording`) —
-/// mac's pipeline has no manual control anywhere in the app (see
-/// `HomeView`'s own doc comment: recording is fully automatic, driven by
-/// `CallMonitor`/`CallRecordingCoordinator` with no human in the loop), so
-/// there's no command here to bind a menu item to. The status line below is
-/// therefore read-only display, not a `RecordCommand`-style toggle.
+/// `TrayResources.xaml` (`hardcodet.net` `TaskbarIcon`), but still scoped
+/// down: Windows' tray menu has a `RecordCommand` that manually
+/// starts/stops recording (`HomeViewModel.ManualStartRecording/
+/// ManualStopRecording`). That control now exists on mac too (Phase 11.2,
+/// see `HomeView`'s manual start/stop button and
+/// `CallRecordingCoordinator.manualStart()`/`manualStop()`) — it's just not
+/// mirrored into this menu yet; the status line below stays read-only
+/// display for now rather than a `RecordCommand`-style toggle. Worth
+/// revisiting if manual control turns out to be needed without opening the
+/// main window first.
 ///
 /// Same "local mirror of a lock-protected snapshot, refreshed via
 /// `NotificationCenter`" pattern `HomeView` already uses for
