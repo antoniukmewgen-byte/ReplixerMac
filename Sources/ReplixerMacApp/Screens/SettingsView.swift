@@ -25,6 +25,14 @@ struct SettingsView: View {
     // this view can't just @ObservedObject/bind straight into the model. It
     // mirrors the value in local @State and writes back explicitly instead.
     @State private var managerName: String = AppSettings.shared.managerName
+    // Phase 10.0: Windows parity — Менеджер/Діагност/Кваліфікатор gates
+    // which call-report fields are shown (`PositionPolicy`) and whether/how
+    // long a call must run before it's sent to Telegram at all
+    // (`PositionPolicy.shouldSkipTelegram`). Picker over free text since
+    // the value has to exactly match one of PositionPolicy's three string
+    // cases — freeform entry could silently fall through its `default`
+    // case and behave like an unrecognized role.
+    @State private var position: String = AppSettings.shared.position
     // Phase 8.2: seeded from AppSettings (last-known intent), not from
     // AutoStartManager.isEnabled (ground truth) — this Form should reflect
     // "what the user asked for" immediately on screen without waiting on a
@@ -44,6 +52,15 @@ struct SettingsView: View {
                     // instead of pressing Return) — onSubmit alone would
                     // miss those.
                     .onChange(of: managerName) { _, _ in saveManagerName() }
+
+                Picker("Роль", selection: $position) {
+                    ForEach(CallReportData.positions, id: \.self) { option in
+                        Text(option).tag(option)
+                    }
+                }
+                .onChange(of: position) { _, newValue in
+                    AppSettings.shared.position = newValue
+                }
             }
 
             Section("Запуск") {

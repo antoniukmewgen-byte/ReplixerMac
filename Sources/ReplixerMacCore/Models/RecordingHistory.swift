@@ -154,6 +154,21 @@ public final class RecordingHistory {
         }
     }
 
+    /// Phase 10.0: records the caption a just-finished (or just-retried)
+    /// upload used/will use — either a submitted call-report's
+    /// `formatCaption()`, or the generic fallback when no report form was
+    /// shown. Set once, right before the corresponding upload attempt
+    /// kicks off, so `beginRetryCandidates`'s callers can reuse the exact
+    /// same text on a later retry instead of reconstructing a different
+    /// (report-less) one.
+    func updateCaption(id: UUID, caption: String) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].caption = caption
+            return true
+        }
+    }
+
     /// Phase 6: records the outcome of an upload attempt (initial or
     /// retried) for `id`. Takes the full final state rather than optional
     /// "only touch what changed" params — `UploadOrchestrator.Result`

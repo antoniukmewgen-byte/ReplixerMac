@@ -66,6 +66,39 @@ public enum FileNaming {
             .appendingPathExtension(ext)
     }
 
+    /// Returns `url` unchanged if nothing already occupies that path,
+    /// otherwise appends an incrementing "_2", "_3", ... disambiguator
+    /// (before the extension) until a free name is found.
+    ///
+    /// `recordingURL(platform:date:manager:)` above already does a
+    /// collision check — but only once, at call-*start* time. Two calls
+    /// starting within the same `{yy.MM.dd}_{HH.mm}` minute (easy to hit
+    /// during rapid manual test/debug cycles — a fresh Xcode Run within
+    /// the same real-world minute as the previous one) both compute the
+    /// *same* candidate name, because at each one's start time neither
+    /// call's final file exists yet to be detected as a collision. Whichever
+    /// finishes second then fails its `stop()` rename with
+    /// `NSCocoaErrorDomain Code=516` ("already exists") — observed exactly
+    /// this way on a real device. Re-checking here, right before the rename
+    /// that actually claims the name (not just once, hopefully-early-enough,
+    /// at start), closes that race regardless of its exact cause.
+    static func resolveCollision(for url: URL) -> URL {
+        guard FileManager.default.fileExists(atPath: url.path) else { return url }
+        let ext = url.pathExtension
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let directory = url.deletingLastPathComponent()
+        var attempt = 2
+        while true {
+            let candidate = directory
+                .appendingPathComponent("\(baseName)_\(attempt)")
+                .appendingPathExtension(ext)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+
     /// Removes any leftover `.inprogress` files in the recordings directory —
     /// remnants of a recording that was interrupted before AudioMixerEncoder
     /// could rename it to its final name. Mirrors the Windows

@@ -98,6 +98,16 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 10.0: manager's role, gating call-report field visibility via
+    // PositionPolicy — Windows parity source: AppSettings.cs's `Position`.
+    // Defaults to "Менеджер" (Windows' own default), the only role with
+    // every report field visible; unlike Windows this never gates a
+    // hardcoded Telegram-chat picker (mac has no such picker — see
+    // SetupWizardView's doc comment), it only feeds PositionPolicy.
+    public var position: String {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
@@ -108,9 +118,10 @@ public final class AppSettings: Codable {
         case googleDriveFolderId
         case isSetupComplete
         case isAutoStartEnabled
+        case position
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false) {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер") {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
@@ -120,6 +131,7 @@ public final class AppSettings: Codable {
         self.googleDriveFolderId = googleDriveFolderId
         self.isSetupComplete = isSetupComplete
         self.isAutoStartEnabled = isAutoStartEnabled
+        self.position = position
     }
 
     public required init(from decoder: Decoder) throws {
@@ -148,6 +160,7 @@ public final class AppSettings: Codable {
         // app startup, where SettingsView hasn't even rendered yet to show
         // a mismatch if there were one.
         isAutoStartEnabled = try container.decodeIfPresent(Bool.self, forKey: .isAutoStartEnabled) ?? false
+        position = try container.decodeIfPresent(String.self, forKey: .position) ?? "Менеджер"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -161,6 +174,7 @@ public final class AppSettings: Codable {
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
         try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
+        try container.encode(position, forKey: .position)
     }
 
     private static func load() -> AppSettings {

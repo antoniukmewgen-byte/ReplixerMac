@@ -57,6 +57,15 @@ public struct RecordingEntry: Codable, Identifiable {
     var driveFailed: Bool
     var telegramFailed: Bool
 
+    // Phase 10.0: the exact Drive/Telegram caption used for this recording
+    // (either the submitted call-report's `formatCaption()`, or the
+    // generic "Запис дзвінку: {file}" fallback when no report form was
+    // shown) — persisted so `retryPendingUploads()` re-sends the *same*
+    // text on a later attempt instead of silently reverting to the generic
+    // fallback just because the report data itself isn't re-askable after
+    // the fact. nil for any entry written before this field existed.
+    var caption: String?
+
     // Transient guard against a slow background-retry tick and a fresh
     // manual retry racing the same entry — deliberately NOT persisted (see
     // CodingKeys/init(from:)/encode(to:) below), same reasoning as Windows'
@@ -74,11 +83,13 @@ public struct RecordingEntry: Codable, Identifiable {
         self.telegramMessageId = nil
         self.driveFailed = false
         self.telegramFailed = false
+        self.caption = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, platform, startedAt, filePath, status, callDuration
         case driveUrl, telegramMessageId, driveFailed, telegramFailed
+        case caption
         // isBackgroundRetrying intentionally omitted from CodingKeys — see
         // its doc comment above.
     }
@@ -100,6 +111,7 @@ public struct RecordingEntry: Codable, Identifiable {
         telegramMessageId = try container.decodeIfPresent(Int64.self, forKey: .telegramMessageId)
         driveFailed = try container.decodeIfPresent(Bool.self, forKey: .driveFailed) ?? false
         telegramFailed = try container.decodeIfPresent(Bool.self, forKey: .telegramFailed) ?? false
+        caption = try container.decodeIfPresent(String.self, forKey: .caption)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -114,6 +126,7 @@ public struct RecordingEntry: Codable, Identifiable {
         try container.encodeIfPresent(telegramMessageId, forKey: .telegramMessageId)
         try container.encode(driveFailed, forKey: .driveFailed)
         try container.encode(telegramFailed, forKey: .telegramFailed)
+        try container.encodeIfPresent(caption, forKey: .caption)
     }
 
     // Windows parity: RecordingEntry.cs's NeedsBackgroundRetry, scoped down

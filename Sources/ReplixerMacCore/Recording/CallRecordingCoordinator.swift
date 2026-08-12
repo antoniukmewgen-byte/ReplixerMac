@@ -23,6 +23,13 @@ public actor CallRecordingCoordinator {
     // being recorded, so callEnded/shutdown can update its status (saved
     // vs error) without needing to search the history by e.g. start time.
     private var currentEntryID: UUID?
+    // Phase 10.0: mirrors of the platform/start-time already captured for
+    // this call — needed once callEnded's finishRecording() has to build a
+    // CallReportRequestStore request and a caption (formatCaption's
+    // `appName`/`duration` params), neither of which RecordingHistory
+    // exposes back out mid-flight the way these plain actor-local fields do.
+    private var currentPlatform: String?
+    private var currentCallStartedAt: Date?
 
     // Phase 4.2: one TDLib session for the whole process lifetime, created
     // lazily on the first finished recording rather than at app startup —
@@ -88,20 +95,23 @@ public actor CallRecordingCoordinator {
 
         isRecording = true
         currentEntryID = RecordingHistory.shared.addStarted(platform: platform)
+        let startedAt = Date()
+        currentPlatform = platform
+        currentCallStartedAt = startedAt
         // Phase 7.5: mirror the state change into RecordingStatusStore so
         // HomeView (ReplixerMacApp, main thread) can show a live
         // "recording in progress" indicator without polling this actor.
-        RecordingStatusStore.shared.update(.init(isRecording: true, platform: platform, startedAt: Date()))
+        RecordingStatusStore.shared.update(.init(isRecording: true, platform: platform, startedAt: startedAt))
         print("[CallRecordingCoordinator] 🔴 запис почався -> \(outputURL.path)")
     }
 
-    public func callEnded(messenger: SupportedMessenger, processName: String) {
+    public func callEnded(messenger: SupportedMessenger, processName: String) async {
         guard isRecording else {
             print("[CallRecordingCoordinator] ⚠️ onCallEnded без активного запису — ігнорую.")
             return
         }
 
-        finishRecording()
+        await finishRecording(requestReport: true)
         print("[CallRecordingCoordinator] ⏹️ запис зупинено.")
     }
 
@@ -121,7 +131,13 @@ public actor CallRecordingCoordinator {
     public func shutdown() async {
         if isRecording {
             print("[CallRecordingCoordinator] 🛑 завершення роботи під час активного запису — коректно зупиняю...")
-            finishRecording()
+            // requestReport: false — quitting must not hang indefinitely
+            // waiting on a report dialog the user may never fill in (no
+            // Windows equivalent of this concern: its shutdown path
+            // (App.OnExit) never awaits StopRecordingAsync's report step
+            // either). The recording itself still finalizes correctly;
+            // only the caption falls back to the generic one.
+            await finishRecording(requestReport: false)
         }
         await pendingUploadTask?.value
         if isRetryingUploads {
@@ -133,38 +149,96 @@ public actor CallRecordingCoordinator {
     }
 
     /// Shared by callEnded/shutdown: stops the encoder, records the outcome
-    /// (saved vs error) in RecordingHistory, and resets state either way —
-    /// a failed stop() shouldn't leave `isRecording` stuck true.
-    private func finishRecording() {
+    /// (saved vs error) in RecordingHistory, optionally requests+awaits a
+    /// call-report form (Phase 10.0 — Windows parity source:
+    /// `HomeViewModel.StopRecordingAsync`'s `reportTask` await), and resets
+    /// state either way — a failed stop() shouldn't leave `isRecording`
+    /// stuck true.
+    ///
+    /// `isRecording` deliberately stays true for the *entire* duration of
+    /// this method, including the report-form await — mac has no
+    /// Windows-style draft/interrupt handling for a second call arriving
+    /// while a report is still open (see `RecordingsView`'s "no `.draft`
+    /// status" doc comment), so keeping the guard up for that whole window
+    /// means a genuinely overlapping call is simply dropped by
+    /// `callStarted`'s existing guard rather than silently corrupting
+    /// state. `RecordingStatusStore` is still reset to `.idle` immediately
+    /// after the encoder stops, independent of how long the report form
+    /// stays open — matching Windows' `StopRecordingAsync`, which flips
+    /// `CallContent` back to idle right away and lets the report dialog
+    /// float on top rather than block the "idle" UI state from showing.
+    ///
+    /// - Parameter requestReport: `false` from `shutdown()` — quitting
+    ///   must not hang waiting on a report dialog nobody may ever answer.
+    private func finishRecording(requestReport: Bool) async {
         let finalURL = AudioMixerEncoder.stop()
-        if let currentEntryID {
-            if let finalURL {
-                RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
-                // Phase 4.2: fire the uploads off as a background Task
-                // rather than awaiting them here — finishRecording() (and
-                // therefore callEnded()) must return promptly so a rapid
-                // subsequent call isn't wrongly rejected by the `isRecording`
-                // guard while a slow upload is still running. shutdown()
-                // drains this task before closing the TDLib client.
-                // Captured explicitly (not read back from `self` inside the
-                // Task) because `currentEntryID` gets reset to nil right
-                // below, before the Task body ever runs.
-                let entryID = currentEntryID
-                pendingUploadTask = Task { [weak self] in
-                    await self?.uploadRecording(fileURL: finalURL, entryID: entryID)
-                }
-            } else {
-                RecordingHistory.shared.markFailed(id: currentEntryID)
-            }
-        }
-        currentEntryID = nil
-        isRecording = false
-        // Phase 7.5: reset the live status regardless of success/failure —
-        // an entry left showing "recording" in the UI after a failed stop
-        // would be as misleading as RecordingHistory leaving one stuck in
-        // `.recording` status forever (see that type's own dangling-entry
-        // handling).
         RecordingStatusStore.shared.update(.idle)
+
+        guard let currentEntryID else {
+            isRecording = false
+            currentPlatform = nil
+            currentCallStartedAt = nil
+            return
+        }
+
+        guard let finalURL else {
+            RecordingHistory.shared.markFailed(id: currentEntryID)
+            self.currentEntryID = nil
+            currentPlatform = nil
+            currentCallStartedAt = nil
+            isRecording = false
+            return
+        }
+
+        RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
+
+        let platform = currentPlatform ?? ""
+        let duration = currentCallStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+
+        // Windows parity (HomeViewModel.StopRecordingAsync): only bother
+        // asking for a report if the answer would actually go somewhere.
+        // No Kommo leg exists on mac yet (Phase 10, still pending), so
+        // "somewhere" is just Telegram for now — add `|| AppSettings.shared
+        // .isKommoEnabled` here once Kommo settings land. "Configured"
+        // (apiId/apiHash/chatId all present) stands in for Windows'
+        // `_orchestrator.IsTelegramReady` — mac has no cheap synchronous
+        // "already logged in" check without attempting a real login.
+        let telegramConfigured = AppSettings.shared.telegramApiId != nil
+            && AppSettings.shared.telegramApiHash != nil
+            && AppSettings.shared.telegramChatId != nil
+        let position = AppSettings.shared.position
+        let needsForm = requestReport
+            && telegramConfigured
+            && PositionPolicy.isTelegramVisible(position)
+
+        let reportData: CallReportData? = needsForm
+            ? await CallReportRequestStore.shared.requestReport(platform: platform, duration: duration)
+            : nil
+
+        let fileName = finalURL.lastPathComponent
+        let caption = reportData?.formatCaption(appName: platform, duration: duration)
+            ?? "Запис дзвінку: \(fileName)"
+        RecordingHistory.shared.updateCaption(id: currentEntryID, caption: caption)
+
+        let skipTelegram = PositionPolicy.shouldSkipTelegram(position, duration: duration)
+
+        // Phase 4.2: fire the uploads off as a background Task rather than
+        // awaiting them here — finishRecording() (and therefore
+        // callEnded()) must return promptly so a rapid subsequent call
+        // isn't wrongly rejected by the `isRecording` guard while a slow
+        // upload is still running. shutdown() drains this task before
+        // closing the TDLib client. Captured explicitly (not read back
+        // from `self` inside the Task) because `currentEntryID` gets reset
+        // to nil right below, before the Task body ever runs.
+        let entryID = currentEntryID
+        pendingUploadTask = Task { [weak self] in
+            await self?.uploadRecording(fileURL: finalURL, entryID: entryID, caption: caption, skipTelegram: skipTelegram)
+        }
+
+        self.currentEntryID = nil
+        currentPlatform = nil
+        currentCallStartedAt = nil
+        isRecording = false
     }
 
     /// Phase 5.3/6: runs both configured uploads for a just-finished
@@ -173,9 +247,7 @@ public actor CallRecordingCoordinator {
     /// `BuildCaption`'s "💾 Google Drive: {url}" line), then persists the
     /// outcome to `RecordingHistory` so any step that failed gets picked up
     /// later by `retryPendingUploads()` instead of being lost.
-    private func uploadRecording(fileURL: URL, entryID: UUID) async {
-        let fileName = fileURL.lastPathComponent
-        let caption = "Запис дзвінку: \(fileName)"
+    private func uploadRecording(fileURL: URL, entryID: UUID, caption: String, skipTelegram: Bool) async {
         let client = await telegramClient()
 
         let result = await UploadOrchestrator.run(
@@ -183,7 +255,8 @@ public actor CallRecordingCoordinator {
             caption: caption,
             existingDriveUrl: nil,
             existingTelegramMessageId: nil,
-            telegramClient: client
+            telegramClient: client,
+            skipTelegram: skipTelegram
         )
 
         RecordingHistory.shared.updateUploadState(
@@ -230,7 +303,13 @@ public actor CallRecordingCoordinator {
             }
 
             let fileName = (filePath as NSString).lastPathComponent
-            let caption = "Запис дзвінку: \(fileName)"
+            // Reuse the caption captured at call-end time (Phase 10.0's
+            // call-report caption, if one was shown) rather than
+            // reconstructing the generic fallback here — see
+            // RecordingEntry.caption's doc comment. Only entries written
+            // before that field existed fall back to the generic text.
+            let caption = entry.caption ?? "Запис дзвінку: \(fileName)"
+            let skipTelegram = PositionPolicy.shouldSkipTelegram(AppSettings.shared.position, duration: entry.callDuration)
             // Resolved even when Telegram already has a messageId: if
             // *Drive* is what this entry is retrying and it succeeds now,
             // UploadOrchestrator needs a client to patch the already-sent
@@ -243,7 +322,8 @@ public actor CallRecordingCoordinator {
                 caption: caption,
                 existingDriveUrl: entry.driveUrl,
                 existingTelegramMessageId: entry.telegramMessageId,
-                telegramClient: client
+                telegramClient: client,
+                skipTelegram: skipTelegram
             )
 
             RecordingHistory.shared.updateUploadState(

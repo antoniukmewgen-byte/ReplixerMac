@@ -43,12 +43,19 @@ enum UploadOrchestrator {
     ///     `nil` means "don't attempt Telegram at all right now" (not logged
     ///     in / login failed) — see below for how that's distinguished from
     ///     "not configured".
+    /// - Parameter skipTelegram: Windows parity — `PositionPolicy
+    ///   .shouldSkipTelegram(position, duration)`, precomputed by the
+    ///   caller (it needs the call's role/duration, neither of which this
+    ///   stateless type tracks). `true` means "don't send to Telegram at
+    ///   all for this recording" — treated as a normal skip, not a
+    ///   failure, same as "not configured".
     static func run(
         filePath: String,
         caption: String,
         existingDriveUrl: String?,
         existingTelegramMessageId: Int64?,
-        telegramClient: TelegramAuthClient?
+        telegramClient: TelegramAuthClient?,
+        skipTelegram: Bool = false
     ) async -> Result {
         var driveUrl = existingDriveUrl
         var driveFailed = false
@@ -62,7 +69,7 @@ enum UploadOrchestrator {
         var telegramFailed = false
         if telegramMessageId == nil {
             (telegramMessageId, telegramFailed) = await attemptTelegram(
-                filePath: filePath, caption: caption, driveUrl: driveUrl, client: telegramClient)
+                filePath: filePath, caption: caption, driveUrl: driveUrl, client: telegramClient, skipTelegram: skipTelegram)
         } else if driveJustSucceeded, let driveUrl, let telegramClient, let sentMessageId = telegramMessageId {
             // Telegram was already sent by an earlier attempt — at a time
             // when Drive hadn't succeeded yet, so its caption has no Drive
@@ -126,7 +133,11 @@ enum UploadOrchestrator {
     /// a failure so the background retry service keeps coming back once
     /// login might work again), or configured with a client (actually try
     /// the send).
-    private static func attemptTelegram(filePath: String, caption: String, driveUrl: String?, client: TelegramAuthClient?) async -> (Int64?, Bool) {
+    private static func attemptTelegram(filePath: String, caption: String, driveUrl: String?, client: TelegramAuthClient?, skipTelegram: Bool) async -> (Int64?, Bool) {
+        guard !skipTelegram else {
+            print("[UploadOrchestrator] ℹ️ роль/тривалість дзвінка не потребують Telegram (PositionPolicy.shouldSkipTelegram) — пропускаю.")
+            return (nil, false)
+        }
         guard AppSettings.shared.telegramChatId != nil else {
             print("[UploadOrchestrator] ℹ️ telegramChatId не налаштовано — пропускаю Telegram.")
             return (nil, false)

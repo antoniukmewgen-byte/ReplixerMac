@@ -91,12 +91,19 @@ public enum AudioMixerEncoder {
 
         var renamedURL: URL?
         if let partialOutputURL, let finalOutputURL {
+            // Re-check for a same-name collision right here, immediately
+            // before actually claiming the name — see
+            // FileNaming.resolveCollision's doc comment for why the
+            // start-time check in FileNaming.recordingURL alone isn't
+            // enough (two calls starting in the same {yy.MM.dd}_{HH.mm}
+            // minute can both compute the same candidate).
+            let resolvedFinalURL = FileNaming.resolveCollision(for: finalOutputURL)
             do {
-                try FileManager.default.moveItem(at: partialOutputURL, to: finalOutputURL)
-                print("[AudioMixerEncoder] ✅ файл готовий: \(finalOutputURL.path)")
-                renamedURL = finalOutputURL
+                try FileManager.default.moveItem(at: partialOutputURL, to: resolvedFinalURL)
+                print("[AudioMixerEncoder] ✅ файл готовий: \(resolvedFinalURL.path)")
+                renamedURL = resolvedFinalURL
             } catch {
-                print("[AudioMixerEncoder] ⚠️ не вдалося перейменувати \(partialOutputURL.lastPathComponent) -> \(finalOutputURL.lastPathComponent): \(error)")
+                print("[AudioMixerEncoder] ⚠️ не вдалося перейменувати \(partialOutputURL.lastPathComponent) -> \(resolvedFinalURL.lastPathComponent): \(error)")
             }
         }
 
