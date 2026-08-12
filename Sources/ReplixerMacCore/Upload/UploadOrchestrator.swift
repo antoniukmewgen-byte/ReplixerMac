@@ -57,12 +57,16 @@ enum UploadOrchestrator {
     ///     in / login failed) — see below for how that's distinguished from
     ///     "not configured".
     /// - Parameter crmUrl: the lead URL from the call report, if one was
-    ///   shown and submitted — feeds the Kommo note leg only. `nil` means
-    ///   "no report data available" (no report form was shown, or this is
-    ///   a `PendingUploadRetryService` retry — `RecordingEntry` doesn't
-    ///   persist `crmUrl`, so a note can only ever be attempted on the
-    ///   *first* pass, never retried; same known gap as before this
-    ///   rework, just relocated — see `attemptKommo` below).
+    ///   shown and submitted — feeds the Kommo note + call-metadata legs
+    ///   only. `nil` means "no report data available" (no report form was
+    ///   shown, or this is a `PendingUploadRetryService` retry —
+    ///   `RecordingEntry` doesn't persist `crmUrl`, so Kommo can only ever
+    ///   be attempted on the *first* pass, never retried; same known gap as
+    ///   before this rework, just relocated — see `attemptKommo` below).
+    /// - Parameter callStartedAt/callType: Phase 10.1b — feed
+    ///   `KommoService.applyCallMetadata`'s first-contact-date/processing-
+    ///   speed and call-type/Nedozvon legs. Same nil-on-retry gap as
+    ///   `crmUrl` (`RecordingEntry` persists neither).
     /// - Parameter skipTelegram: Windows parity — `PositionPolicy
     ///   .shouldSkipTelegram(position, duration)`, precomputed by the
     ///   caller (it needs the call's role/duration, neither of which this
@@ -73,6 +77,8 @@ enum UploadOrchestrator {
         filePath: String,
         caption: String,
         crmUrl: String?,
+        callStartedAt: Date?,
+        callType: String?,
         existingDriveUrl: String?,
         existingTelegramMessageId: Int64?,
         telegramClient: TelegramAuthClient?,
@@ -105,7 +111,8 @@ enum UploadOrchestrator {
             client: telegramClient,
             skipTelegram: skipTelegram
         )
-        async let kommoDone: Void = attemptKommo(crmUrl: crmUrl, caption: caption, driveUrl: resolvedDriveUrl)
+        async let kommoDone: Void = attemptKommo(
+            crmUrl: crmUrl, caption: caption, driveUrl: resolvedDriveUrl, callStartedAt: callStartedAt, callType: callType)
 
         let (telegramMessageId, telegramFailed) = await telegramOutcome
         await kommoDone
@@ -220,20 +227,36 @@ enum UploadOrchestrator {
     /// as `KommoService.CheckOutcome`), inline on the first attempt, no
     /// separate edit-after-the-fact step the way Telegram sometimes needs.
     ///
+    /// Phase 10.1b: the note post and `KommoService.applyCallMetadata`
+    /// (first-contact date/processing speed, call-type field, Nedozvon
+    /// status advance) are independent writes to the same lead — Windows
+    /// parity `KommoService.ProcessLeadAsync` fires them via
+    /// `Task.WhenAll`, so this fires them via `async let` rather than
+    /// awaiting the note before starting metadata.
+    ///
     /// Silently skips (not a failure, nothing returned/tracked in
     /// `Result`) when Kommo isn't configured or there's no `crmUrl` —
     /// same opt-in-automation shape as `attemptGoogleDrive`/`attemptTelegram`.
-    /// Still no retry tracking: `RecordingEntry` has no `crmUrl` field, so
-    /// `PendingUploadRetryService` always passes `crmUrl: nil` and this
-    /// simply never fires on a retry — a failed note is logged and dropped,
-    /// not retried, same known gap as before this rework.
-    private static func attemptKommo(crmUrl: String?, caption: String, driveUrl: String?) async {
+    /// Still no retry tracking: `RecordingEntry` has no `crmUrl`/
+    /// `callStartedAt`/`callType` fields, so `PendingUploadRetryService`
+    /// always passes them as `nil` and this simply never fires on a retry —
+    /// a failed note/metadata write is logged and dropped, not retried,
+    /// same known gap as before this rework.
+    private static func attemptKommo(crmUrl: String?, caption: String, driveUrl: String?, callStartedAt: Date?, callType: String?) async {
         guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return }
         guard let crmUrl else { return }
-        var text = caption
-        if let driveUrl, !driveUrl.isEmpty {
-            text += "\n💾 Google Drive: \(driveUrl)"
-        }
+        let text: String = {
+            guard let driveUrl, !driveUrl.isEmpty else { return caption }
+            return caption + "\n💾 Google Drive: \(driveUrl)"
+        }()
+
+        async let noteTask: Void = postKommoNote(crmUrl: crmUrl, text: text)
+        async let metadataTask: Void = KommoService.applyCallMetadata(crmUrl: crmUrl, callStartTime: callStartedAt, callType: callType)
+        await noteTask
+        await metadataTask
+    }
+
+    private static func postKommoNote(crmUrl: String, text: String) async {
         do {
             try await KommoService.addNote(crmUrl: crmUrl, text: text)
             print("[UploadOrchestrator] ✅ нотатку додано в Kommo.")

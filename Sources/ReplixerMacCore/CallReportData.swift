@@ -58,18 +58,25 @@ public struct CallReportData: Codable, Equatable, Sendable {
         self.note = note
     }
 
+    /// Windows parity source: `HomeViewModel.ResolveCallType` — the type
+    /// actually meant when `callType == "Інший"` and a custom type was typed
+    /// in. Pulled out to a property (Phase 10.1b) rather than staying a
+    /// private closure inside `formatCaption` below, since Kommo's call-type
+    /// custom field and Nedozvon-detection (`KommoService.applyCallMetadata`)
+    /// need the exact same substitution Windows' `UploadOrchestrator` feeds
+    /// `KommoService.ProcessLeadAsync`'s `callType` parameter.
+    public var resolvedCallType: String {
+        if callType == "Інший", let customCallType, !customCallType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return customCallType
+        }
+        return callType
+    }
+
     /// Windows parity source: `CallReportData.FormatCaption()` — verbatim
     /// line-for-line port (same emoji prefixes, same field order, same
     /// `#оплата` hashtag suffix), just with `appName`/`duration` as params
     /// instead of stored properties (see type doc comment above).
     public func formatCaption(appName: String, duration: TimeInterval) -> String {
-        let resolvedCallType: String = {
-            if callType == "Інший", let customCallType, !customCallType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return customCallType
-            }
-            return callType
-        }()
-
         var resolvedOutcome: String = {
             if outcome == "Інший", let customOutcome, !customOutcome.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return customOutcome

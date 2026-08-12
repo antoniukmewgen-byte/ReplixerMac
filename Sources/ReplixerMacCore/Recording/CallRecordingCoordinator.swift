@@ -193,7 +193,12 @@ public actor CallRecordingCoordinator {
         RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
 
         let platform = currentPlatform ?? ""
-        let duration = currentCallStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        // Frozen here (before the `currentCallStartedAt = nil` reset below)
+        // — Phase 10.1b's Kommo call-metadata leg (first-contact date/
+        // processing speed) needs the actual call-start `Date`, not just
+        // the already-computed `duration` interval.
+        let callStartedAt = currentCallStartedAt
+        let duration = callStartedAt.map { Date().timeIntervalSince($0) } ?? 0
 
         // Windows parity (HomeViewModel.StopRecordingAsync): only bother
         // asking for a report if the answer would actually go somewhere —
@@ -240,10 +245,18 @@ public actor CallRecordingCoordinator {
         // firing Telegram/Kommo, so there's no reason left for Kommo to be
         // a separate, earlier-firing Task the way it briefly was; see
         // UploadOrchestrator's doc comment.
+        //
+        // callType (Phase 10.1b) is the *resolved* type (custom-type
+        // substitution already applied — see `CallReportData.resolvedCallType`),
+        // matching what Windows' `HomeViewModel.ResolveCallType` feeds
+        // `KommoService.ProcessLeadAsync`'s `callType` parameter.
         let entryID = currentEntryID
         let crmUrl = reportData?.crmUrl
+        let callType = reportData?.resolvedCallType
         pendingUploadTask = Task { [weak self] in
-            await self?.uploadRecording(fileURL: finalURL, entryID: entryID, caption: caption, crmUrl: crmUrl, skipTelegram: skipTelegram)
+            await self?.uploadRecording(
+                fileURL: finalURL, entryID: entryID, caption: caption, crmUrl: crmUrl,
+                callStartedAt: callStartedAt, callType: callType, skipTelegram: skipTelegram)
         }
 
         self.currentEntryID = nil
@@ -252,22 +265,28 @@ public actor CallRecordingCoordinator {
         isRecording = false
     }
 
-    /// Phase 5.3/6/10.1a: runs the configured Drive/Telegram/Kommo steps
-    /// for a just-finished recording via `UploadOrchestrator` (Drive first,
-    /// so its resulting link can be embedded in both the Telegram caption
-    /// and the Kommo note — Windows-parity `BuildCaption`'s
+    /// Phase 5.3/6/10.1a/10.1b: runs the configured Drive/Telegram/Kommo
+    /// steps for a just-finished recording via `UploadOrchestrator` (Drive
+    /// first, so its resulting link can be embedded in both the Telegram
+    /// caption and the Kommo note — Windows-parity `BuildCaption`'s
     /// "💾 Google Drive: {url}" line — before Telegram-send and the Kommo
-    /// note fire concurrently), then persists the Drive/Telegram outcome to
-    /// `RecordingHistory` so any step that failed gets picked up later by
-    /// `retryPendingUploads()` instead of being lost. Kommo has no such
-    /// tracking (see `UploadOrchestrator.attemptKommo`'s doc comment).
-    private func uploadRecording(fileURL: URL, entryID: UUID, caption: String, crmUrl: String?, skipTelegram: Bool) async {
+    /// note+call-metadata legs fire concurrently), then persists the
+    /// Drive/Telegram outcome to `RecordingHistory` so any step that failed
+    /// gets picked up later by `retryPendingUploads()` instead of being
+    /// lost. Kommo has no such tracking (see
+    /// `UploadOrchestrator.attemptKommo`'s doc comment).
+    private func uploadRecording(
+        fileURL: URL, entryID: UUID, caption: String, crmUrl: String?,
+        callStartedAt: Date?, callType: String?, skipTelegram: Bool
+    ) async {
         let client = await telegramClient()
 
         let result = await UploadOrchestrator.run(
             filePath: fileURL.path,
             caption: caption,
             crmUrl: crmUrl,
+            callStartedAt: callStartedAt,
+            callType: callType,
             existingDriveUrl: nil,
             existingTelegramMessageId: nil,
             telegramClient: client,
@@ -335,10 +354,13 @@ public actor CallRecordingCoordinator {
             let result = await UploadOrchestrator.run(
                 filePath: filePath,
                 caption: caption,
-                // RecordingEntry has no crmUrl field (never persisted —
-                // see its doc comment), so a background retry can never
-                // attempt/re-attempt the Kommo note, only Drive/Telegram.
+                // RecordingEntry has no crmUrl/callStartedAt/callType fields
+                // (never persisted — see RecordingEntry's doc comment), so a
+                // background retry can never attempt/re-attempt the Kommo
+                // note or call-metadata legs, only Drive/Telegram.
                 crmUrl: nil,
+                callStartedAt: nil,
+                callType: nil,
                 existingDriveUrl: entry.driveUrl,
                 existingTelegramMessageId: entry.telegramMessageId,
                 telegramClient: client,
