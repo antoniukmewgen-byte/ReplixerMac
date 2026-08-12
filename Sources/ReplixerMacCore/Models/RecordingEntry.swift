@@ -19,6 +19,15 @@ public enum RecordingStatus: String, Codable {
     /// error, or the final rename itself failed) — no playable file at
     /// `filePath`.
     case error
+    /// Phase 11.3 — Windows parity: `RecordingStatus.Draft`. The call
+    /// finished and the file is on disk, but the call-report form got
+    /// interrupted (a new call arrived, see `CallReportRequestStore
+    /// .interrupt()`) before the user submitted it — no upload was
+    /// attempted. Whatever was typed so far lives in `reportData`;
+    /// `CallRecordingCoordinator.resumeDraft(entryID:)` re-opens the form
+    /// prefilled with it and, once actually submitted, runs the same
+    /// upload path a normal call-end would have.
+    case draft
 }
 
 /// A single row in the recordings history (`recordings.json`). Windows
