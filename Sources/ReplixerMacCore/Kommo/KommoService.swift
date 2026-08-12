@@ -1,4 +1,5 @@
 import Foundation
+import PhoneNumberKit
 
 /// Phase 10.1a — minimal Kommo CRM integration: verifies API connectivity
 /// (`GET /account`, for a UI "Перевірити з'єднання" button) and creates a
@@ -16,13 +17,20 @@ import Foundation
 /// "MARK") adds the hardcoded custom-field/pipeline/status ids this type's
 /// doc comment used to call out as deferred — first-contact date,
 /// UTC-based processing-speed minutes, the call-type field, and
-/// pipeline/status auto-advance into "Недозвон". Still NOT ported: the
-/// phone/timezone-derived "робочий час" processing-speed variant (needs a
-/// phone-number-parsing dependency mac doesn't have yet — see
-/// `trySetFirstContactDate`'s doc comment) and any missed-call-flow
-/// equivalent (`MissedCallReportViewModel`'s `NoCommunicationCallTypeMarker`
-/// use — mac has no missed-call reporting screen yet, see
-/// `MissedCallsView`'s doc comment).
+/// pipeline/status auto-advance into "Недозвон".
+///
+/// Phase 10.1c adds the one leg 10.1b deliberately left out: the
+/// phone/timezone-derived "робочий час" processing-speed variant
+/// (`trySetLocalTimeProcessingSpeed` below), using `PhoneNumberKit` (added
+/// to `Package.swift` this phase) for phone parsing plus a hand-maintained
+/// `USAreaCodeTimeZones` table standing in for Windows' proprietary
+/// libphonenumber-csharp geocoder data — see both types' doc comments for
+/// exactly where the fidelity is scoped down.
+///
+/// Still NOT ported: any missed-call-flow equivalent
+/// (`MissedCallReportViewModel`'s `NoCommunicationCallTypeMarker` use — mac
+/// has no missed-call reporting screen yet, see `MissedCallsView`'s doc
+/// comment).
 public enum KommoService {
     public enum KommoError: Swift.Error {
         case notConfigured
@@ -38,9 +46,8 @@ public enum KommoService {
     private static let firstContactFieldId: Int64 = 1225821
     private static let processingSpeedFieldId: Int64 = 1225823
     private static let callTypeFieldId: Int64 = 1226157
-    // Reserved, not yet written by `trySetFirstContactDate` below — see its
-    // doc comment for why (needs a phone number + phone→timezone lookup,
-    // neither of which macOS has yet).
+    // Phase 10.1c: "Скорость обработки в рабочее время" — written by
+    // `trySetLocalTimeProcessingSpeed` below.
     private static let processingSpeedLocalTimeFieldId: Int64 = 1227531
     private static let contactPhoneFieldId: Int64 = 458590
     private static let sourceFieldId: Int64 = 1220023
@@ -207,19 +214,14 @@ public enum KommoService {
     }
 
     /// Windows parity source: `KommoService.TrySetFirstContactDateAsync`,
-    /// minus its phone/timezone-derived "робочий час" leg
-    /// (`ProcessingSpeedLocalTimeFieldId`) — that needs a phone number
-    /// resolved from the lead's Kommo contact/company plus a
-    /// phone-number→IANA-timezone lookup (Windows: libphonenumber's
-    /// `PhoneNumberToTimeZonesMapper`), and mac has no phone-number-parsing
-    /// dependency yet (see `Package.swift`). Deliberately deferred, not
-    /// silently dropped: `processingSpeedLocalTimeFieldId` simply never gets
-    /// written by this port yet, same "known gap, revisit later" shape as
-    /// `UploadOrchestrator.attemptKommo`'s retry-tracking gap.
+    /// including the phone/timezone-derived "робочий час" leg
+    /// (`processingSpeedLocalTimeFieldId`, delegated to
+    /// `trySetLocalTimeProcessingSpeed` below) added in Phase 10.1c.
     ///
     /// Never overwrites a field that already has *any* non-empty value
-    /// (`firstContactOccupied`/`speedMinutesOccupied` below) — someone may
-    /// have filled it in by hand in Kommo's UI already.
+    /// (`firstContactOccupied`/`speedMinutesOccupied`/
+    /// `speedWorkMinutesOccupied` below) — someone may have filled it in by
+    /// hand in Kommo's UI already.
     private static func trySetFirstContactDate(baseURL: String, token: String, leadId: String, callStartTime: Date) async -> Int? {
         let details = await getLeadDetails(baseURL: baseURL, token: token, leadId: leadId)
 
@@ -234,19 +236,244 @@ public enum KommoService {
 
         // "Реактивация" — лід уже був у роботі раніше, тож "швидкість першого
         // касання" не показник (це не реакція на нове звернення) — пишемо 0
-        // замість розрахунку, з тим самим "не чіпаємо, якщо вже зайняте" захистом.
+        // замість розрахунку (для обох полів швидкості), з тим самим "не
+        // чіпаємо, якщо вже зайняте" захистом.
         if details.isReactivationSource {
-            if details.speedMinutesOccupied { return details.speedMinutes }
-            await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedFieldId, value: 0)
-            return 0
+            if !details.speedMinutesOccupied {
+                await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedFieldId, value: 0)
+            }
+            if !details.speedWorkMinutesOccupied {
+                await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedLocalTimeFieldId, value: 0)
+            }
+            return details.speedMinutesOccupied ? details.speedMinutes : 0
         }
 
-        if details.speedMinutesOccupied { return details.speedMinutes }
-        guard let createdAt = details.createdAt, let firstContactUnix else { return nil }
+        guard let createdAt = details.createdAt, let firstContactUnix else {
+            return details.speedMinutesOccupied ? details.speedMinutes : nil
+        }
 
-        let minutes = Int((Double(abs(createdAt - firstContactUnix)) / 60).rounded())
-        await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedFieldId, value: minutes)
+        let minutes: Int?
+        if details.speedMinutesOccupied {
+            minutes = details.speedMinutes
+        } else {
+            let computed = Int((Double(abs(createdAt - firstContactUnix)) / 60).rounded())
+            await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedFieldId, value: computed)
+            minutes = computed
+        }
+
+        if details.speedWorkMinutesOccupied {
+            // Already set — leave it, matching Windows' "keep whatever's there" branch.
+        } else if details.contactId != nil || details.companyId != nil {
+            _ = await trySetLocalTimeProcessingSpeed(
+                baseURL: baseURL, token: token, leadId: leadId,
+                contactId: details.contactId, companyId: details.companyId,
+                leadCreatedAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
+                firstContactAt: Date(timeIntervalSince1970: TimeInterval(firstContactUnix))
+            )
+        } else {
+            print("[KommoService] ⚠️ лід \(leadId) без прив'язаного контакту чи компанії — поле 'робочий час' не заповнено.")
+        }
+
         return minutes
+    }
+
+    /// Windows parity source: `KommoService.TrySetLocalTimeProcessingSpeedAsync`.
+    /// Resolves a timezone from the lead's contact (falling back to its
+    /// company) phone number, then sums how much of `[leadCreatedAt,
+    /// firstContactAt]` falls inside the configured workday window
+    /// (`AppSettings.shared.workDayStartMinutes/EndMinutes`) in that local
+    /// time — same "робочий час" definition as Windows'
+    /// `CalculateWorkingHoursDuration`.
+    private static func trySetLocalTimeProcessingSpeed(
+        baseURL: String, token: String, leadId: String,
+        contactId: String?, companyId: String?,
+        leadCreatedAt: Date, firstContactAt: Date
+    ) async -> Int? {
+        var phone: String?
+        if let contactId {
+            phone = await getContactPhone(baseURL: baseURL, token: token, contactId: contactId)
+        }
+        if (phone?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true), let companyId {
+            phone = await getCompanyPhone(baseURL: baseURL, token: token, companyId: companyId)
+        }
+        guard let phone, !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("[KommoService] ⚠️ контакт \(contactId ?? "—") і компанія \(companyId ?? "—") (лід \(leadId)) без телефону — поле 'робочий час' не заповнено.")
+            return nil
+        }
+
+        guard let (timeZone, isUkrainian) = resolveTimeZone(fromPhone: phone) else {
+            print("[KommoService] ⚠️ не вдалося визначити часовий пояс за номером '\(phone)' (лід \(leadId)) — поле 'робочий час' не заповнено.")
+            return nil
+        }
+
+        // Для українських номерів вікно робочого часу зсувається на +7 год
+        // в обидва боки (напр. дефолт 9:00–21:00 → 16:00–04:00).
+        var workDayStart = TimeInterval(AppSettings.shared.workDayStartMinutes * 60)
+        var workDayEnd = TimeInterval(AppSettings.shared.workDayEndMinutes * 60)
+        if isUkrainian {
+            workDayStart += 7 * 3600
+            workDayEnd += 7 * 3600
+        }
+
+        let leadCreatedLocal = localWallClockAsUTC(leadCreatedAt, timeZone: timeZone)
+        let callStartLocal = localWallClockAsUTC(firstContactAt, timeZone: timeZone)
+
+        let duration = calculateWorkingHoursDuration(
+            startLocal: leadCreatedLocal, endLocal: callStartLocal, workDayStart: workDayStart, workDayEnd: workDayEnd)
+        let minutes = Int((duration / 60).rounded())
+
+        await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedLocalTimeFieldId, value: minutes)
+        return minutes
+    }
+
+    /// Windows parity source: `KommoService.TryResolveTimeZoneFromPhone`.
+    /// `PhoneNumberKit` (added to `Package.swift` Phase 10.1c) replaces
+    /// libphonenumber-csharp for the parsing step; `USAreaCodeTimeZones`
+    /// replaces its `PhoneNumberToTimeZonesMapper` geocoder for the actual
+    /// zone lookup. Windows resolves a real geographic zone only for
+    /// Ukrainian and US numbers — every other country (Canada included,
+    /// since it has its own NANP region code distinct from "US") is treated
+    /// as if the client were in Miami; that exact behavior is reproduced
+    /// here rather than "improved", for parity with what production Kommo
+    /// data already looks like.
+    private static func resolveTimeZone(fromPhone rawPhone: String) -> (timeZone: TimeZone, isUkrainian: Bool)? {
+        let utility = PhoneNumberUtility()
+        let trimmed = rawPhone.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let phoneNumber: PhoneNumber
+        do {
+            phoneNumber = try utility.parse(trimmed)
+        } catch {
+            guard !trimmed.hasPrefix("+") else { return nil }
+            do {
+                phoneNumber = trimmed.hasPrefix("0")
+                    // Local Ukrainian national format with a trunk "0"
+                    // (e.g. "0 (98) 721 26 42") — no country code, so parse
+                    // with region "UA" instead of blindly prepending "+"
+                    // (which would produce an invalid "+0..." number, since
+                    // no country calling code starts with "0").
+                    ? try utility.parse(trimmed, withRegion: "UA", ignoreType: true)
+                    // No "+" but the digits already look like they include
+                    // a country calling code — just missing the leading "+".
+                    : try utility.parse("+" + trimmed)
+            } catch {
+                return nil
+            }
+        }
+
+        let isUkrainian = phoneNumber.regionID == "UA"
+        if isUkrainian {
+            return (TimeZone(identifier: "Europe/Kyiv") ?? TimeZone(identifier: "Europe/Kiev")!, true)
+        }
+
+        if phoneNumber.regionID == "US" {
+            let areaCode = String(String(phoneNumber.nationalNumber).prefix(3))
+            if let tzId = USAreaCodeTimeZones.timeZone(forAreaCode: areaCode), let tz = TimeZone(identifier: tzId) {
+                return (tz, false)
+            }
+        }
+
+        return (TimeZone(identifier: "America/New_York")!, false)
+    }
+
+    /// Re-labels a `Date`'s wall-clock fields *in `timeZone`* as if they
+    /// were UTC — e.g. 14:00 America/Denver becomes a `Date` whose UTC
+    /// components read 14:00. `calculateWorkingHoursDuration` below then
+    /// does plain UTC `Date` arithmetic on the result, which is equivalent
+    /// to Windows' naive `TimeSpan`/`DateTime` day-window math on a
+    /// `TimeZoneInfo.ConvertTimeFromUtc`-converted (offset-less) `DateTime`
+    /// — deliberately not DST-transition-aware in either port (a day that's
+    /// actually 23 or 25 hours long is still treated as exactly 24).
+    private static func localWallClockAsUTC(_ date: Date, timeZone: TimeZone) -> Date {
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = timeZone
+        let components = localCalendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+        return utcCalendar.date(from: components) ?? date
+    }
+
+    /// Windows parity source: `KommoService.CalculateWorkingHoursDuration` —
+    /// sums only the portion of `[startLocal, endLocal]` (both already
+    /// re-labeled onto UTC by `localWallClockAsUTC`) that falls within the
+    /// daily `[workDayStart, workDayEnd)` window, walking one calendar day
+    /// at a time and skipping the overnight gap each day — every day counts
+    /// the same, no weekends excluded.
+    private static func calculateWorkingHoursDuration(
+        startLocal: Date, endLocal: Date, workDayStart: TimeInterval, workDayEnd: TimeInterval
+    ) -> TimeInterval {
+        var start = startLocal
+        var end = endLocal
+        if end < start { swap(&start, &end) }
+
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+
+        var total: TimeInterval = 0
+        var day = utcCalendar.startOfDay(for: start)
+        let lastDay = utcCalendar.startOfDay(for: end)
+
+        while day <= lastDay {
+            let windowStart = day.addingTimeInterval(workDayStart)
+            let windowEnd = day.addingTimeInterval(workDayEnd)
+            let segmentStart = max(windowStart, start)
+            let segmentEnd = min(windowEnd, end)
+            if segmentEnd > segmentStart {
+                total += segmentEnd.timeIntervalSince(segmentStart)
+            }
+            day = utcCalendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
+        }
+        return total
+    }
+
+    /// Windows parity source: `KommoService.GetContactPhoneAsync`.
+    private static func getContactPhone(baseURL: String, token: String, contactId: String) async -> String? {
+        await getEntityPhone(baseURL: baseURL, token: token, path: "contacts/\(contactId)")
+    }
+
+    /// Windows parity source: `KommoService.GetCompanyPhoneAsync` — fallback
+    /// for when the contact itself has no phone but the lead's company does
+    /// (e.g. the contact was created without one, but a form recorded the
+    /// number on the company instead).
+    private static func getCompanyPhone(baseURL: String, token: String, companyId: String) async -> String? {
+        await getEntityPhone(baseURL: baseURL, token: token, path: "companies/\(companyId)")
+    }
+
+    // Shared by getContactPhone/getCompanyPhone — Kommo's "Телефон" field
+    // (field_id = contactPhoneFieldId) is a multitext field on both entity
+    // types with the same shape (possibly several entries of different
+    // types — WORK/MOB/FAX/HOME/OTHER — some possibly empty), so both read
+    // it identically; only the endpoint path differs.
+    private static func getEntityPhone(baseURL: String, token: String, path: String) async -> String? {
+        guard let url = URL(string: "\(baseURL)/\(path)") else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                print("[KommoService] ❌ getEntityPhone(\(path)) HTTP \(status).")
+                return nil
+            }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let fields = json["custom_fields_values"] as? [[String: Any]] else { return nil }
+
+            for field in fields {
+                guard let fieldId = (field["field_id"] as? NSNumber)?.int64Value, fieldId == contactPhoneFieldId else { continue }
+                guard let values = field["values"] as? [[String: Any]] else { return nil }
+                for v in values {
+                    if let s = v["value"] as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return s
+                    }
+                }
+                return nil
+            }
+            return nil
+        } catch {
+            print("[KommoService] ❌ getEntityPhone(\(path)) виняток: \(error)")
+            return nil
+        }
     }
 
     private struct LeadDetails {
@@ -257,16 +484,14 @@ public enum KommoService {
         var companyId: String?
         var speedMinutes: Int?
         var speedMinutesOccupied = false
+        var speedWorkMinutes: Int?
+        var speedWorkMinutesOccupied = false
         var isReactivationSource = false
     }
 
-    /// Windows parity source: `KommoService.GetLeadDetailsAsync`, scoped
-    /// down to what `trySetFirstContactDate` above actually reads —
-    /// `speedWorkMinutes`/`speedWorkMinutesOccupied` aren't tracked since
-    /// nothing here writes `processingSpeedLocalTimeFieldId` yet.
-    /// `"with=contacts,companies,custom_fields"` still requested (not just
-    /// `custom_fields`) so `contactId`/`companyId` are already threaded
-    /// through for whenever the phone/timezone leg gets built.
+    /// Windows parity source: `KommoService.GetLeadDetailsAsync`.
+    /// `"with=contacts,companies,custom_fields"` is what threads
+    /// `contactId`/`companyId` through to `trySetLocalTimeProcessingSpeed`.
     private static func getLeadDetails(baseURL: String, token: String, leadId: String) async -> LeadDetails {
         guard let url = URL(string: "\(baseURL)/leads/\(leadId)?with=contacts,companies,custom_fields") else {
             return LeadDetails()
@@ -306,7 +531,8 @@ public enum KommoService {
                         continue
                     }
 
-                    guard fieldId == firstContactFieldId || fieldId == processingSpeedFieldId else { continue }
+                    guard fieldId == firstContactFieldId || fieldId == processingSpeedFieldId
+                        || fieldId == processingSpeedLocalTimeFieldId else { continue }
                     guard let values = field["values"] as? [[String: Any]],
                           let occupied = Self.firstOccupiedValue(in: values) else { continue }
 
@@ -319,9 +545,12 @@ public enum KommoService {
                     if fieldId == firstContactFieldId {
                         details.firstContactOccupied = true
                         details.firstContactUnix = numericValue
-                    } else {
+                    } else if fieldId == processingSpeedFieldId {
                         details.speedMinutesOccupied = true
                         details.speedMinutes = numericValue.map(Int.init)
+                    } else {
+                        details.speedWorkMinutesOccupied = true
+                        details.speedWorkMinutes = numericValue.map(Int.init)
                     }
                 }
             }

@@ -125,6 +125,21 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 10.1c: Kommo's "робочий час" (working-hours) processing-speed
+    // field needs the same configurable workday window Windows exposes as
+    // `AppSettings.WorkDayStart`/`WorkDayEnd` (`TimeSpan`, defaults 9:00/
+    // 21:00). Stored as minutes-since-midnight (Int, not TimeSpan/Date —
+    // Foundation has no lightweight "time of day" type, and minutes is
+    // trivial to turn into a `DatePicker`-friendly `Date` in SettingsView
+    // without dragging a specific calendar day along with it). Defaults
+    // match Windows' `TimeSpan.FromHours(9)`/`FromHours(21)` exactly.
+    public var workDayStartMinutes: Int {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    public var workDayEndMinutes: Int {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
@@ -138,9 +153,11 @@ public final class AppSettings: Codable {
         case position
         case kommoSubdomain
         case kommoApiToken
+        case workDayStartMinutes
+        case workDayEndMinutes
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil) {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
@@ -153,6 +170,8 @@ public final class AppSettings: Codable {
         self.position = position
         self.kommoSubdomain = kommoSubdomain
         self.kommoApiToken = kommoApiToken
+        self.workDayStartMinutes = workDayStartMinutes
+        self.workDayEndMinutes = workDayEndMinutes
     }
 
     public required init(from decoder: Decoder) throws {
@@ -184,6 +203,8 @@ public final class AppSettings: Codable {
         position = try container.decodeIfPresent(String.self, forKey: .position) ?? "Менеджер"
         kommoSubdomain = try container.decodeIfPresent(String.self, forKey: .kommoSubdomain)
         kommoApiToken = try container.decodeIfPresent(String.self, forKey: .kommoApiToken)
+        workDayStartMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayStartMinutes) ?? 9 * 60
+        workDayEndMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayEndMinutes) ?? 21 * 60
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -200,6 +221,8 @@ public final class AppSettings: Codable {
         try container.encode(position, forKey: .position)
         try container.encode(kommoSubdomain, forKey: .kommoSubdomain)
         try container.encode(kommoApiToken, forKey: .kommoApiToken)
+        try container.encode(workDayStartMinutes, forKey: .workDayStartMinutes)
+        try container.encode(workDayEndMinutes, forKey: .workDayEndMinutes)
     }
 
     private static func load() -> AppSettings {

@@ -9,10 +9,12 @@ import ReplixerMacCore
 /// `IsNotificationsEnabled`, `WorkDayStart`/`WorkDayEnd` here too; mac
 /// `AppSettings` deliberately had none of those fields until Phase 8 gave
 /// `IsAutoStartEnabled` a real backend (`AutoStartManager`/`SMAppService`) —
-/// see the "Запуск" section below. `IsNotificationsEnabled`/`WorkDayStart`/
-/// `WorkDayEnd` still have no real behavior to drive (no notification-
-/// sending path exists yet), so those stay cut for now, same
-/// don't-add-a-field-before-the-phase-that-uses-it stance.
+/// see the "Запуск" section below, and Phase 10.1c gave `WorkDayStart`/
+/// `WorkDayEnd` one too (`KommoService`'s working-hours processing-speed
+/// field — see the "Робочий час" section). `IsNotificationsEnabled` still
+/// has no real behavior to drive (no notification-sending path exists yet),
+/// so that one stays cut for now, same don't-add-a-field-before-the-phase-
+/// that-uses-it stance.
 ///
 /// Telegram/Google Drive credentials (`telegramApiId/Hash`, `telegramChatId`
 /// /`TopicId`, `googleServiceAccountPath`, `googleDriveFolderId`) stay
@@ -43,6 +45,16 @@ struct SettingsView: View {
     @State private var isAutoStartEnabled: Bool = AppSettings.shared.isAutoStartEnabled
     @State private var autoStartError: String?
 
+    // Phase 10.1c: feeds KommoService's "робочий час" processing-speed calc
+    // (see its doc comment). AppSettings stores minutes-since-midnight
+    // (Int); DatePicker wants a Date, so these two @State vars are built
+    // from/collapsed back to that Int via workDayDate(fromMinutes:)/
+    // minutesSinceMidnight(from:) below — same local-@State-mirror pattern
+    // as every other field on this screen, just with an extra unit
+    // conversion at the boundary.
+    @State private var workDayStart: Date = SettingsView.workDayDate(fromMinutes: AppSettings.shared.workDayStartMinutes)
+    @State private var workDayEnd: Date = SettingsView.workDayDate(fromMinutes: AppSettings.shared.workDayEndMinutes)
+
     var body: some View {
         Form {
             Section("Профіль") {
@@ -72,6 +84,20 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
+            }
+
+            Section("Робочий час") {
+                DatePicker("Початок", selection: $workDayStart, displayedComponents: .hourAndMinute)
+                    .onChange(of: workDayStart) { _, newValue in
+                        AppSettings.shared.workDayStartMinutes = Self.minutesSinceMidnight(from: newValue)
+                    }
+                DatePicker("Кінець", selection: $workDayEnd, displayedComponents: .hourAndMinute)
+                    .onChange(of: workDayEnd) { _, newValue in
+                        AppSettings.shared.workDayEndMinutes = Self.minutesSinceMidnight(from: newValue)
+                    }
+                Text("Використовується Kommo-полем \"Швидкість обробки в робочий час\" — межі робочого дня клієнта в його місцевому часовому поясі (для українських номерів вікно зсувається на +7 год).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Дані застосунку") {
@@ -114,5 +140,21 @@ struct SettingsView: View {
             autoStartError = "Не вдалося змінити автозапуск: \(error)"
             isAutoStartEnabled = AppSettings.shared.isAutoStartEnabled
         }
+    }
+
+    // `DatePicker(displayedComponents: .hourAndMinute)` still needs a full
+    // `Date`, not just an hour/minute pair — anchors both onto today's date
+    // at midnight local time (the calendar day itself is thrown away by
+    // minutesSinceMidnight below, only hour/minute round-trip).
+    private static func workDayDate(fromMinutes minutes: Int) -> Date {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .minute, value: minutes, to: startOfToday) ?? startOfToday
+    }
+
+    private static func minutesSinceMidnight(from date: Date) -> Int {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 }

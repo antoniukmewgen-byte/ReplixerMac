@@ -15,7 +15,15 @@ let package = Package(
         // from TDLib's tl-schema; pulls in TDLibFramework as a prebuilt
         // binary xcframework (prebuilt TDLib itself, no local C++ build
         // needed) as its own transitive dependency.
-        .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.66-022d6020")
+        .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.66-022d6020"),
+        // Phase 10.1c: KommoService's "робочий час" processing-speed leg
+        // needs to parse a Kommo contact/company phone number well enough to
+        // extract a country/region (Windows: libphonenumber-csharp's
+        // PhoneNumberUtil). This is the Swift Package Manager successor to
+        // the now-archived marmelroy/PhoneNumberKit (moved orgs, same
+        // library) — macOS 10.15+/Swift 5.9, well within this package's
+        // 14.2 floor.
+        .package(url: "https://github.com/PhoneNumberKit/PhoneNumberKit", from: "5.0.0")
     ],
     targets: [
         // Phase 7.1: library target holding all real logic (audio capture,
@@ -25,7 +33,8 @@ let package = Package(
         .target(
             name: "ReplixerMacCore",
             dependencies: [
-                .product(name: "TDLibKit", package: "TDLibKit")
+                .product(name: "TDLibKit", package: "TDLibKit"),
+                .product(name: "PhoneNumberKit", package: "PhoneNumberKit")
             ],
             path: "Sources/ReplixerMacCore"
         ),
