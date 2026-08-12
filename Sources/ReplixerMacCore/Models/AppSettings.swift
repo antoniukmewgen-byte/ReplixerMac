@@ -108,6 +108,23 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 10.1a: Kommo CRM — subdomain (the part before `.kommo.com`) and
+    // a long-lived API token, Windows parity source: AppSettings.cs's
+    // `KommoSubdomain`/`KommoApiToken`. Unlike Windows, there's no separate
+    // `IsKommoEnabled` flag here — same "presence of both required fields
+    // IS the enabled signal" convention `telegramConfigured`
+    // (CallRecordingCoordinator) already uses for Telegram, rather than a
+    // redundant boolean that could drift out of sync with them. No cached
+    // `IsKommoConnected` either, matching how Drive's own "test connection"
+    // result (ProfileView's `driveTestResult`) already stays UI-local
+    // @State instead of persisted.
+    public var kommoSubdomain: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    public var kommoApiToken: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramApiId
@@ -119,9 +136,11 @@ public final class AppSettings: Codable {
         case isSetupComplete
         case isAutoStartEnabled
         case position
+        case kommoSubdomain
+        case kommoApiToken
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер") {
+    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil) {
         self.managerName = managerName
         self.telegramApiId = telegramApiId
         self.telegramApiHash = telegramApiHash
@@ -132,6 +151,8 @@ public final class AppSettings: Codable {
         self.isSetupComplete = isSetupComplete
         self.isAutoStartEnabled = isAutoStartEnabled
         self.position = position
+        self.kommoSubdomain = kommoSubdomain
+        self.kommoApiToken = kommoApiToken
     }
 
     public required init(from decoder: Decoder) throws {
@@ -161,6 +182,8 @@ public final class AppSettings: Codable {
         // a mismatch if there were one.
         isAutoStartEnabled = try container.decodeIfPresent(Bool.self, forKey: .isAutoStartEnabled) ?? false
         position = try container.decodeIfPresent(String.self, forKey: .position) ?? "Менеджер"
+        kommoSubdomain = try container.decodeIfPresent(String.self, forKey: .kommoSubdomain)
+        kommoApiToken = try container.decodeIfPresent(String.self, forKey: .kommoApiToken)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -175,6 +198,8 @@ public final class AppSettings: Codable {
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
         try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
         try container.encode(position, forKey: .position)
+        try container.encode(kommoSubdomain, forKey: .kommoSubdomain)
+        try container.encode(kommoApiToken, forKey: .kommoApiToken)
     }
 
     private static func load() -> AppSettings {

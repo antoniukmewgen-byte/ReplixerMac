@@ -6,10 +6,10 @@ import Foundation
 /// `PendingUploadRetryService`'s "try the steps that failed last time"
 /// path, so the two don't duplicate the same guard/attempt/log logic.
 ///
-/// Windows parity source: `UploadOrchestrator.cs`, scoped down — no Kommo
-/// leg yet (Phase 10, not built), and no `ReportData`/caption-form concept
-/// on macOS yet (no Phase 7 UI), so `caption` is passed straight through
-/// rather than built from a report form.
+/// Windows parity source: `UploadOrchestrator.cs`, scoped down — no
+/// `ReportData`/caption-form concept on macOS yet (no Phase 7 UI), so
+/// `caption` is passed straight through rather than built from a report
+/// form.
 ///
 /// Simplification vs Windows: `UploadOrchestrator.cs`'s `RetryMissingStepsAsync`
 /// takes separate `needDrive`/`needTelegram` flags (from
@@ -19,6 +19,19 @@ import Foundation
 /// that was simply never configured stays nil forever and its `*Failed`
 /// flag never gets set to true, so `RecordingHistory.needsBackgroundRetry`
 /// never selects it in the first place. No separate need-flags required.
+///
+/// Phase 10.1a rework: Drive is always awaited to completion *first*
+/// (matching Windows' own sequencing), then Telegram-send and the Kommo
+/// note run *concurrently* — both only need `driveUrl` (already resolved
+/// by then) and don't depend on each other. Kommo previously fired as its
+/// own independent `Task` straight out of `CallRecordingCoordinator` the
+/// moment the call ended, racing Drive and therefore never getting the
+/// Drive link in its note text; folding it in here means both destinations
+/// get the link inline on the very first attempt, no after-the-fact
+/// "edit the message" patch needed for that common case (the Telegram
+/// caption-patch path below still exists, but only for the genuine retry
+/// edge case: Telegram sent on one attempt while Drive was still down,
+/// Drive succeeds on a *later* retry).
 enum UploadOrchestrator {
     struct Result {
         var driveUrl: String?
@@ -43,6 +56,13 @@ enum UploadOrchestrator {
     ///     `nil` means "don't attempt Telegram at all right now" (not logged
     ///     in / login failed) — see below for how that's distinguished from
     ///     "not configured".
+    /// - Parameter crmUrl: the lead URL from the call report, if one was
+    ///   shown and submitted — feeds the Kommo note leg only. `nil` means
+    ///   "no report data available" (no report form was shown, or this is
+    ///   a `PendingUploadRetryService` retry — `RecordingEntry` doesn't
+    ///   persist `crmUrl`, so a note can only ever be attempted on the
+    ///   *first* pass, never retried; same known gap as before this
+    ///   rework, just relocated — see `attemptKommo` below).
     /// - Parameter skipTelegram: Windows parity — `PositionPolicy
     ///   .shouldSkipTelegram(position, duration)`, precomputed by the
     ///   caller (it needs the call's role/duration, neither of which this
@@ -52,6 +72,7 @@ enum UploadOrchestrator {
     static func run(
         filePath: String,
         caption: String,
+        crmUrl: String?,
         existingDriveUrl: String?,
         existingTelegramMessageId: Int64?,
         telegramClient: TelegramAuthClient?,
@@ -65,22 +86,29 @@ enum UploadOrchestrator {
             driveJustSucceeded = driveUrl != nil
         }
 
-        var telegramMessageId = existingTelegramMessageId
-        var telegramFailed = false
-        if telegramMessageId == nil {
-            (telegramMessageId, telegramFailed) = await attemptTelegram(
-                filePath: filePath, caption: caption, driveUrl: driveUrl, client: telegramClient, skipTelegram: skipTelegram)
-        } else if driveJustSucceeded, let driveUrl, let telegramClient, let sentMessageId = telegramMessageId {
-            // Telegram was already sent by an earlier attempt — at a time
-            // when Drive hadn't succeeded yet, so its caption has no Drive
-            // link. Drive just succeeded *now* (this run), so patch the
-            // existing message rather than leaving it permanently missing
-            // the link — see TelegramUploadService.editCaption's doc
-            // comment for why this can't just rely on a manual "edit"
-            // action the way Windows does.
-            await patchTelegramCaptionWithDriveLink(
-                messageId: sentMessageId, caption: caption, driveUrl: driveUrl, authClient: telegramClient)
-        }
+        // driveUrl/driveJustSucceeded are now final for this run — frozen
+        // into `let`s here because Swift's concurrency checker won't let
+        // `async let` initializers below capture a `var` (even though
+        // nothing mutates it after this point, the compiler can't prove
+        // that from a `var` declaration alone).
+        let resolvedDriveUrl = driveUrl
+        let resolvedDriveJustSucceeded = driveJustSucceeded
+
+        // Telegram and Kommo both read the frozen driveUrl below but never
+        // race each other or Drive for it.
+        async let telegramOutcome: (Int64?, Bool) = resolveTelegram(
+            existingMessageId: existingTelegramMessageId,
+            driveJustSucceeded: resolvedDriveJustSucceeded,
+            filePath: filePath,
+            caption: caption,
+            driveUrl: resolvedDriveUrl,
+            client: telegramClient,
+            skipTelegram: skipTelegram
+        )
+        async let kommoDone: Void = attemptKommo(crmUrl: crmUrl, caption: caption, driveUrl: resolvedDriveUrl)
+
+        let (telegramMessageId, telegramFailed) = await telegramOutcome
+        await kommoDone
 
         return Result(
             driveUrl: driveUrl,
@@ -88,6 +116,32 @@ enum UploadOrchestrator {
             telegramMessageId: telegramMessageId,
             telegramFailed: telegramFailed
         )
+    }
+
+    private static func resolveTelegram(
+        existingMessageId: Int64?,
+        driveJustSucceeded: Bool,
+        filePath: String,
+        caption: String,
+        driveUrl: String?,
+        client: TelegramAuthClient?,
+        skipTelegram: Bool
+    ) async -> (Int64?, Bool) {
+        guard let existingMessageId else {
+            return await attemptTelegram(
+                filePath: filePath, caption: caption, driveUrl: driveUrl, client: client, skipTelegram: skipTelegram)
+        }
+        if driveJustSucceeded, let driveUrl, let client {
+            // Telegram was already sent by an earlier attempt — at a time
+            // when Drive hadn't succeeded yet, so its caption has no Drive
+            // link. Drive just succeeded *now* (this run — necessarily a
+            // retry, since the first-pass path above always waits for
+            // Drive before Telegram even starts), so patch the existing
+            // message rather than leaving it permanently missing the link.
+            await patchTelegramCaptionWithDriveLink(
+                messageId: existingMessageId, caption: caption, driveUrl: driveUrl, authClient: client)
+        }
+        return (existingMessageId, false)
     }
 
     /// Silently skips (not a failure) when Drive isn't configured at all —
@@ -154,6 +208,37 @@ enum UploadOrchestrator {
         } catch {
             print("[UploadOrchestrator] ❌ не вдалося надіслати запис у Telegram: \(error)")
             return (nil, true)
+        }
+    }
+
+    /// Phase 10.1a rework: Kommo note, moved here from
+    /// `CallRecordingCoordinator` so it can run concurrently with Telegram
+    /// while still only starting *after* Drive resolves — the note text
+    /// gets the same "💾 Google Drive: {url}" line Telegram's caption gets
+    /// (`TelegramUploadService.buildCaption`'s format, duplicated here
+    /// rather than shared — same self-contained-per-integration precedent
+    /// as `KommoService.CheckOutcome`), inline on the first attempt, no
+    /// separate edit-after-the-fact step the way Telegram sometimes needs.
+    ///
+    /// Silently skips (not a failure, nothing returned/tracked in
+    /// `Result`) when Kommo isn't configured or there's no `crmUrl` —
+    /// same opt-in-automation shape as `attemptGoogleDrive`/`attemptTelegram`.
+    /// Still no retry tracking: `RecordingEntry` has no `crmUrl` field, so
+    /// `PendingUploadRetryService` always passes `crmUrl: nil` and this
+    /// simply never fires on a retry — a failed note is logged and dropped,
+    /// not retried, same known gap as before this rework.
+    private static func attemptKommo(crmUrl: String?, caption: String, driveUrl: String?) async {
+        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return }
+        guard let crmUrl else { return }
+        var text = caption
+        if let driveUrl, !driveUrl.isEmpty {
+            text += "\n💾 Google Drive: \(driveUrl)"
+        }
+        do {
+            try await KommoService.addNote(crmUrl: crmUrl, text: text)
+            print("[UploadOrchestrator] ✅ нотатку додано в Kommo.")
+        } catch {
+            print("[UploadOrchestrator] ❌ не вдалося додати нотатку в Kommo: \(error)")
         }
     }
 }

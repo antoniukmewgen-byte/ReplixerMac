@@ -5,8 +5,10 @@ import ReplixerMacCore
 
 /// Phase 7.6 — Windows parity source: `ProfileViewModel` (486 lines), scoped
 /// per the plan to Google Drive + Telegram sections only; Kommo/Google
-/// Sheets stay stubbed pending Phase 10 backends (their mac services don't
-/// exist yet — nothing for a "test connection" button to call).
+/// Sheets stayed stubbed pending Phase 10 backends. Phase 10.1a added a real
+/// Kommo section (subdomain/token + "Перевірити з'єднання", same pattern as
+/// Drive's below) once `KommoService` existed to back it — Google Sheets
+/// still has no service to call, so it stays a placeholder.
 ///
 /// Same local-@State-mirror-of-a-plain-class pattern as SettingsView (mac
 /// `AppSettings` isn't an `ObservableObject`, ReplixerMacCore stays
@@ -45,6 +47,12 @@ struct ProfileView: View {
     // that would tell it to refresh mid-session anyway (no UI here ever
     // creates or deletes the session).
     @State private var telegramHasSavedSession = TelegramAuthClient.hasSavedSession
+
+    // Phase 10.1a
+    @State private var kommoSubdomain: String = AppSettings.shared.kommoSubdomain ?? ""
+    @State private var kommoApiToken: String = AppSettings.shared.kommoApiToken ?? ""
+    @State private var isTestingKommoConnection = false
+    @State private var kommoTestResult: KommoService.CheckOutcome?
 
     var body: some View {
         Form {
@@ -114,7 +122,38 @@ struct ProfileView: View {
                 }
             }
 
-            Section("Kommo та Google Sheets") {
+            Section("Kommo CRM") {
+                TextField("Subdomain (напр. myaccount)", text: $kommoSubdomain)
+                    .onSubmit(saveKommoSubdomain)
+                    .onChange(of: kommoSubdomain) { _, _ in saveKommoSubdomain() }
+                SecureField("API токен", text: $kommoApiToken)
+                    .onSubmit(saveKommoApiToken)
+                    .onChange(of: kommoApiToken) { _, _ in saveKommoApiToken() }
+
+                Button {
+                    testKommoConnection()
+                } label: {
+                    if isTestingKommoConnection {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Перевірити з'єднання")
+                    }
+                }
+                .disabled(isTestingKommoConnection)
+
+                if let kommoTestResult {
+                    switch kommoTestResult {
+                    case .success(let message):
+                        Label(message, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .failure(let message):
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section("Google Sheets") {
                 Text("Заплановано на Phase 10.")
                     .foregroundStyle(.secondary)
             }
@@ -183,6 +222,28 @@ struct ProfileView: View {
             AppSettings.shared.telegramTopicId = nil
         } else if let value = Int(trimmed) {
             AppSettings.shared.telegramTopicId = value
+        }
+    }
+
+    // Same "empty clears the setting" stance as the Telegram fields above —
+    // both start out unset on every fresh install.
+    private func saveKommoSubdomain() {
+        let trimmed = kommoSubdomain.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppSettings.shared.kommoSubdomain = trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func saveKommoApiToken() {
+        let trimmed = kommoApiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppSettings.shared.kommoApiToken = trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func testKommoConnection() {
+        isTestingKommoConnection = true
+        kommoTestResult = nil
+        Task {
+            let result = await KommoService.testConnection()
+            isTestingKommoConnection = false
+            kommoTestResult = result
         }
     }
 }

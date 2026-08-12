@@ -196,20 +196,24 @@ public actor CallRecordingCoordinator {
         let duration = currentCallStartedAt.map { Date().timeIntervalSince($0) } ?? 0
 
         // Windows parity (HomeViewModel.StopRecordingAsync): only bother
-        // asking for a report if the answer would actually go somewhere.
-        // No Kommo leg exists on mac yet (Phase 10, still pending), so
-        // "somewhere" is just Telegram for now — add `|| AppSettings.shared
-        // .isKommoEnabled` here once Kommo settings land. "Configured"
-        // (apiId/apiHash/chatId all present) stands in for Windows'
-        // `_orchestrator.IsTelegramReady` — mac has no cheap synchronous
-        // "already logged in" check without attempting a real login.
+        // asking for a report if the answer would actually go somewhere —
+        // Telegram (gated by role via PositionPolicy.isTelegramVisible) or,
+        // since Phase 10.1a, Kommo (gated by nothing role-specific: every
+        // position's canSubmit already requires crmUrl/note, so Kommo
+        // applies uniformly, including Діагност — the one role
+        // isTelegramVisible excludes). "Configured" (apiId/apiHash/chatId
+        // all present, or kommoApiToken present) stands in for Windows'
+        // `_orchestrator.IsTelegramReady`/Kommo-enabled checks — mac has no
+        // cheap synchronous "already logged in" check without attempting a
+        // real login, and no separate isKommoEnabled flag (see
+        // AppSettings.kommoApiToken's doc comment).
         let telegramConfigured = AppSettings.shared.telegramApiId != nil
             && AppSettings.shared.telegramApiHash != nil
             && AppSettings.shared.telegramChatId != nil
         let position = AppSettings.shared.position
-        let needsForm = requestReport
-            && telegramConfigured
-            && PositionPolicy.isTelegramVisible(position)
+        let wantsTelegram = telegramConfigured && PositionPolicy.isTelegramVisible(position)
+        let kommoConfigured = AppSettings.shared.kommoSubdomain != nil && AppSettings.shared.kommoApiToken != nil
+        let needsForm = requestReport && (wantsTelegram || kommoConfigured)
 
         let reportData: CallReportData? = needsForm
             ? await CallReportRequestStore.shared.requestReport(platform: platform, duration: duration)
@@ -230,9 +234,16 @@ public actor CallRecordingCoordinator {
         // closing the TDLib client. Captured explicitly (not read back
         // from `self` inside the Task) because `currentEntryID` gets reset
         // to nil right below, before the Task body ever runs.
+        //
+        // crmUrl (Phase 10.1a) rides along the same Task now — since the
+        // rework, UploadOrchestrator.run itself waits for Drive before
+        // firing Telegram/Kommo, so there's no reason left for Kommo to be
+        // a separate, earlier-firing Task the way it briefly was; see
+        // UploadOrchestrator's doc comment.
         let entryID = currentEntryID
+        let crmUrl = reportData?.crmUrl
         pendingUploadTask = Task { [weak self] in
-            await self?.uploadRecording(fileURL: finalURL, entryID: entryID, caption: caption, skipTelegram: skipTelegram)
+            await self?.uploadRecording(fileURL: finalURL, entryID: entryID, caption: caption, crmUrl: crmUrl, skipTelegram: skipTelegram)
         }
 
         self.currentEntryID = nil
@@ -241,18 +252,22 @@ public actor CallRecordingCoordinator {
         isRecording = false
     }
 
-    /// Phase 5.3/6: runs both configured uploads for a just-finished
-    /// recording via `UploadOrchestrator` (Drive first, so its resulting
-    /// link can be embedded in the Telegram caption — Windows-parity
-    /// `BuildCaption`'s "💾 Google Drive: {url}" line), then persists the
-    /// outcome to `RecordingHistory` so any step that failed gets picked up
-    /// later by `retryPendingUploads()` instead of being lost.
-    private func uploadRecording(fileURL: URL, entryID: UUID, caption: String, skipTelegram: Bool) async {
+    /// Phase 5.3/6/10.1a: runs the configured Drive/Telegram/Kommo steps
+    /// for a just-finished recording via `UploadOrchestrator` (Drive first,
+    /// so its resulting link can be embedded in both the Telegram caption
+    /// and the Kommo note — Windows-parity `BuildCaption`'s
+    /// "💾 Google Drive: {url}" line — before Telegram-send and the Kommo
+    /// note fire concurrently), then persists the Drive/Telegram outcome to
+    /// `RecordingHistory` so any step that failed gets picked up later by
+    /// `retryPendingUploads()` instead of being lost. Kommo has no such
+    /// tracking (see `UploadOrchestrator.attemptKommo`'s doc comment).
+    private func uploadRecording(fileURL: URL, entryID: UUID, caption: String, crmUrl: String?, skipTelegram: Bool) async {
         let client = await telegramClient()
 
         let result = await UploadOrchestrator.run(
             filePath: fileURL.path,
             caption: caption,
+            crmUrl: crmUrl,
             existingDriveUrl: nil,
             existingTelegramMessageId: nil,
             telegramClient: client,
@@ -320,6 +335,10 @@ public actor CallRecordingCoordinator {
             let result = await UploadOrchestrator.run(
                 filePath: filePath,
                 caption: caption,
+                // RecordingEntry has no crmUrl field (never persisted —
+                // see its doc comment), so a background retry can never
+                // attempt/re-attempt the Kommo note, only Drive/Telegram.
+                crmUrl: nil,
                 existingDriveUrl: entry.driveUrl,
                 existingTelegramMessageId: entry.telegramMessageId,
                 telegramClient: client,
