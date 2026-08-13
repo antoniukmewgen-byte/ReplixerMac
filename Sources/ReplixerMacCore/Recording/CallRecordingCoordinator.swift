@@ -344,7 +344,17 @@ public actor CallRecordingCoordinator {
         let fileName = finalURL.lastPathComponent
         let caption = reportData?.formatCaption(appName: platform, duration: duration)
             ?? "Запис дзвінку: \(fileName)"
-        RecordingHistory.shared.updateCaption(id: entryID, caption: caption)
+        // Phase 11.4 fix: persist the submitted reportData onto the entry
+        // too, not just its caption text — otherwise a later `editReport`
+        // (which prefills the form from `entry.reportData`) would find
+        // nothing to prefill with and open an empty form. No report shown
+        // at all (`reportData == nil`) still falls back to the plain
+        // caption-only write, same as before.
+        if let reportData {
+            RecordingHistory.shared.updateReportData(id: entryID, reportData: reportData, caption: caption)
+        } else {
+            RecordingHistory.shared.updateCaption(id: entryID, caption: caption)
+        }
 
         let skipTelegram = PositionPolicy.shouldSkipTelegram(position, duration: duration)
 
@@ -419,7 +429,10 @@ public actor CallRecordingCoordinator {
             return .interrupted
         case .submitted(let reportData):
             let caption = reportData.formatCaption(appName: entry.platform, duration: entry.callDuration)
-            RecordingHistory.shared.updateCaption(id: entryID, caption: caption)
+            // Phase 11.4 fix: same reasoning as finishRecording's — persist
+            // reportData itself, not just the caption text, so a later
+            // editReport has something to prefill the form with.
+            RecordingHistory.shared.updateReportData(id: entryID, reportData: reportData, caption: caption)
             let skipTelegram = PositionPolicy.shouldSkipTelegram(AppSettings.shared.position, duration: entry.callDuration)
             let crmUrl = reportData.crmUrl
             let callType = reportData.resolvedCallType
@@ -457,6 +470,11 @@ public actor CallRecordingCoordinator {
             callType: callType,
             existingDriveUrl: nil,
             existingTelegramMessageId: nil,
+            // A .draft entry never reached the upload step before now (see
+            // `finishRecording`'s `wasInterrupted` branch) — no Kommo note
+            // could already exist for it, same reasoning as the nil
+            // existingDriveUrl/existingTelegramMessageId above.
+            existingKommoNoteId: nil,
             telegramClient: client,
             skipTelegram: skipTelegram
         )
@@ -466,9 +484,115 @@ public actor CallRecordingCoordinator {
             driveUrl: result.driveUrl,
             driveFailed: result.driveFailed,
             telegramMessageId: result.telegramMessageId,
-            telegramFailed: result.telegramFailed
+            telegramFailed: result.telegramFailed,
+            kommoNoteId: result.kommoNoteId
         )
         RecordingHistory.shared.markDraftResolved(id: entryID, succeeded: !result.driveFailed && !result.telegramFailed)
+    }
+
+    /// Phase 11.4 — Windows parity: `HomeViewModel.EditEntryReportAsync`.
+    /// Re-opens the call-report form prefilled with `entry.reportData` for
+    /// an already fully-sent entry, and on submit patches the already-sent
+    /// Telegram message's caption and the already-created Kommo note's text
+    /// *in place* — rather than sending new ones — via
+    /// `TelegramUploadService.editCaption`/`KommoService.editNote`, run
+    /// concurrently (`async let`, Windows parity: `Task.WhenAll` over
+    /// `EditTelegramCaptionAsync`/`EditKommoNoteAsync`). Only persists the
+    /// new `reportData`/caption onto the entry
+    /// (`RecordingHistory.updateReportData`) once *both* edits report
+    /// success — a partial success (e.g. Telegram edited but Kommo failed)
+    /// leaves the stored report untouched, and surfaces a combined error
+    /// naming exactly which leg(s) failed, same as Windows'
+    /// `string.Join("\n", ...)` over both warnings.
+    public enum EditReportOutcome: Equatable, Sendable {
+        case succeeded
+        case notFound
+        /// Nothing to edit against — Windows gates the "Редагувати" button
+        /// on `HasTelegramMessage`; mirrored here as a hard precondition
+        /// rather than a UI-only gate, so a stale/racing call can't slip
+        /// through.
+        case noTelegramMessage
+        case reportAlreadyOpen
+        case interrupted
+        case failed(String)
+    }
+
+    public func editReport(entryID: UUID) async -> EditReportOutcome {
+        guard let entry = RecordingHistory.shared.entries.first(where: { $0.id == entryID }) else {
+            return .notFound
+        }
+        guard let messageId = entry.telegramMessageId else {
+            return .noTelegramMessage
+        }
+        guard CallReportRequestStore.shared.pending == nil else {
+            return .reportAlreadyOpen
+        }
+
+        let outcome = await CallReportRequestStore.shared.requestReport(
+            platform: entry.platform, duration: entry.callDuration, existing: entry.reportData)
+
+        guard case .submitted(let reportData) = outcome else {
+            return .interrupted
+        }
+
+        let caption = reportData.formatCaption(appName: entry.platform, duration: entry.callDuration)
+        let callType = reportData.resolvedCallType
+
+        async let telegramWarning: String? = editTelegramCaption(
+            entryID: entryID, messageId: messageId, caption: caption, driveUrl: entry.driveUrl)
+        async let kommoWarning: String? = editKommoNote(
+            crmUrl: reportData.crmUrl, noteId: entry.kommoNoteId, caption: caption,
+            driveUrl: entry.driveUrl, callType: callType)
+
+        let warnings = [await telegramWarning, await kommoWarning].compactMap { $0 }
+
+        guard warnings.isEmpty else {
+            return .failed(warnings.joined(separator: "\n"))
+        }
+
+        RecordingHistory.shared.updateReportData(id: entryID, reportData: reportData, caption: caption)
+        return .succeeded
+    }
+
+    /// Wraps `TelegramUploadService.editCaption`'s throwing shape into the
+    /// `String?`-warning shape `editReport` aggregates both legs with —
+    /// Windows parity: `EditTelegramCaptionAsync`'s own try/catch returning
+    /// a human string instead of rethrowing. The `.messageDeleted` case
+    /// additionally clears the entry's stored `telegramMessageId` (Windows:
+    /// `entry.TelegramMessageId = null` in the same catch), since the
+    /// message this id pointed at is now confirmed gone — leaving the stale
+    /// id around would just make every future edit attempt fail the same
+    /// way.
+    private func editTelegramCaption(entryID: UUID, messageId: Int64, caption: String, driveUrl: String?) async -> String? {
+        guard let client = await telegramClient() else {
+            return "Telegram: не вдалося встановити з'єднання"
+        }
+        guard let chatId = AppSettings.shared.telegramChatId else {
+            return "Telegram: не налаштовано чат"
+        }
+        do {
+            try await TelegramUploadService.editCaption(
+                messageId: messageId, chatId: chatId, caption: caption, driveUrl: driveUrl, authClient: client)
+            return nil
+        } catch TelegramUploadService.EditCaptionError.messageDeleted {
+            RecordingHistory.shared.clearTelegramMessageId(id: entryID)
+            return TelegramUploadService.messageDeletedWarning
+        } catch {
+            return "Telegram: \(error)"
+        }
+    }
+
+    /// Windows parity: `EditKommoNoteAsync`. No-op (returns nil — nothing to
+    /// report as failed) when Kommo was never part of this entry's original
+    /// upload (`crmUrl`/`noteId` missing), same as `UploadOrchestrator
+    /// .attemptKommo` treating a missing crmUrl as "skip, not fail".
+    private func editKommoNote(crmUrl: String?, noteId: Int64?, caption: String, driveUrl: String?, callType: String?) async -> String? {
+        guard let crmUrl, let noteId else { return nil }
+        let text: String = {
+            guard let driveUrl, !driveUrl.isEmpty else { return caption }
+            return caption + "\n💾 Google Drive: \(driveUrl)"
+        }()
+        return await KommoService.editNote(leadUrl: crmUrl, noteId: noteId, noteText: text, callType: callType)
     }
 
     /// Phase 5.3/6/10.1a/10.1b: runs the configured Drive/Telegram/Kommo
@@ -495,6 +619,7 @@ public actor CallRecordingCoordinator {
             callType: callType,
             existingDriveUrl: nil,
             existingTelegramMessageId: nil,
+            existingKommoNoteId: nil,
             telegramClient: client,
             skipTelegram: skipTelegram
         )
@@ -504,7 +629,8 @@ public actor CallRecordingCoordinator {
             driveUrl: result.driveUrl,
             driveFailed: result.driveFailed,
             telegramMessageId: result.telegramMessageId,
-            telegramFailed: result.telegramFailed
+            telegramFailed: result.telegramFailed,
+            kommoNoteId: result.kommoNoteId
         )
     }
 
@@ -569,6 +695,12 @@ public actor CallRecordingCoordinator {
                 callType: nil,
                 existingDriveUrl: entry.driveUrl,
                 existingTelegramMessageId: entry.telegramMessageId,
+                // Preserves whatever note id an earlier attempt already
+                // captured — crmUrl is always nil on a background retry (see
+                // the doc comment on the `crmUrl:` argument a few lines up),
+                // so attemptKommo never posts a *new* note here; it just
+                // hands this back unchanged.
+                existingKommoNoteId: entry.kommoNoteId,
                 telegramClient: client,
                 skipTelegram: skipTelegram
             )
@@ -578,7 +710,8 @@ public actor CallRecordingCoordinator {
                 driveUrl: result.driveUrl,
                 driveFailed: result.driveFailed,
                 telegramMessageId: result.telegramMessageId,
-                telegramFailed: result.telegramFailed
+                telegramFailed: result.telegramFailed,
+                kommoNoteId: result.kommoNoteId
             )
 
             if !result.driveFailed && !result.telegramFailed {

@@ -135,7 +135,17 @@ public enum KommoService {
     /// sweep) — deliberately out of scope for this minimal slice; a failed
     /// note is logged by the caller and not tracked anywhere for a later
     /// retry attempt yet.
-    public static func addNote(crmUrl: String, text: String) async throws {
+    ///
+    /// Phase 11.4: returns the created note's id (`nil` if the response
+    /// shape is unexpected — treated as "couldn't determine the id", not a
+    /// request failure, since the note itself was already created
+    /// successfully by the time this parses the body) so
+    /// `UploadOrchestrator`/`RecordingHistory` can persist it onto
+    /// `RecordingEntry.kommoNoteId` for a later `editNote` call. Windows
+    /// parity source: `KommoService.PostNoteAsync`'s `_embedded.notes[0].id`
+    /// extraction.
+    @discardableResult
+    public static func addNote(crmUrl: String, text: String) async throws -> Int64? {
         guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else {
             throw KommoError.notConfigured
         }
@@ -170,6 +180,87 @@ public enum KommoService {
             let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
             throw KommoError.requestFailed("статус \(status): \(bodyText)")
         }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let embedded = json["_embedded"] as? [String: Any],
+              let notes = embedded["notes"] as? [[String: Any]],
+              let first = notes.first,
+              let noteId = (first["id"] as? NSNumber)?.int64Value
+        else {
+            return nil
+        }
+        return noteId
+    }
+
+    /// Phase 11.4 — Windows parity: `KommoService.EditNoteAsync`. Patches an
+    /// already-created note's text in place (`PATCH /leads/{id}/notes`,
+    /// keyed by the note's own `id` rather than `entity_id` the way
+    /// `addNote`'s create payload is), then — same as `applyCallMetadata`'s
+    /// legs, but sequential here rather than concurrent since both are
+    /// best-effort follow-ups to a note edit the caller already knows
+    /// succeeded, not independent legs racing each other — re-patches the
+    /// call-type field and re-checks the Nedozvon auto-advance in case the
+    /// user changed the call type while editing the report.
+    ///
+    /// Returns a `String?` warning (`nil` == success) rather than throwing,
+    /// unlike `addNote` — mirrors Windows' `Task<string?>` shape, which
+    /// `CallRecordingCoordinator.editReport` needs to aggregate alongside
+    /// `TelegramUploadService`'s own edit outcome via `async let` without
+    /// either leg's failure aborting the other.
+    ///
+    /// No `IsKommoEnabled`-style short-circuit beyond the plain
+    /// token-presence check below — same deliberate divergence already
+    /// documented on this type (presence of the required settings *is* the
+    /// enabled signal on mac, see `AppSettings.kommoApiToken`'s doc
+    /// comment).
+    public static func editNote(leadUrl: String, noteId: Int64, noteText: String, callType: String? = nil) async -> String? {
+        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else {
+            return "Kommo: інтеграція вимкнена"
+        }
+        guard let (subdomain, leadId) = parseLeadURL(leadUrl) else {
+            return "Kommo: не вдалося розпарсити URL ліда"
+        }
+        let baseURL = "https://\(subdomain).kommo.com/api/v4"
+
+        guard let url = URL(string: "\(baseURL)/leads/\(leadId)/notes") else {
+            return "Kommo: не вдалося розпарсити URL ліда"
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Windows parity: `PATCH /leads/{id}/notes` body is keyed by the
+        // note's own `id` (not `entity_id`, which `addNote`'s create payload
+        // above uses) — that's what tells Kommo which existing note to edit
+        // rather than create a new one.
+        let payload: [[String: Any]] = [[
+            "id": noteId,
+            "note_type": "common",
+            "params": ["text": noteText],
+        ]]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
+                return "Kommo: помилка \(status): \(bodyText)"
+            }
+        } catch {
+            return "Kommo: \(error)"
+        }
+
+        let trimmedCallType = callType?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedCallType, !trimmedCallType.isEmpty {
+            await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: callTypeFieldId, value: trimmedCallType)
+        }
+        if let callType, callType.contains(noCommunicationCallTypeMarker) {
+            await tryAdvanceToNedozvonStatus(baseURL: baseURL, token: token, leadId: leadId)
+        }
+
+        return nil
     }
 
     // MARK: - Phase 10.1b: call metadata (first-contact date, processing

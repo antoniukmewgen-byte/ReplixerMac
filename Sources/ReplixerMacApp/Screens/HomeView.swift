@@ -192,6 +192,11 @@ private struct RecentActivityRow: View {
     // named property: surfaces resumeDraft()'s non-.started outcomes.
     @State private var resumeAlertMessage: String?
 
+    // Phase 11.4 — same purpose as RecordingRow's identically named
+    // property: surfaces editReport()'s non-.succeeded/.interrupted
+    // outcomes.
+    @State private var editAlertMessage: String?
+
     var body: some View {
         HStack(spacing: 12) {
             statusIcon
@@ -235,6 +240,19 @@ private struct RecentActivityRow: View {
                 }
                 .help("Відкрити на Google Drive")
             }
+
+            // Phase 11.4 — mirrors RecordingsView's RecordingRow edit
+            // button, same reasoning as the resume-draft/Finder/Drive
+            // buttons above.
+            if entry.telegramMessageId != nil {
+                Button {
+                    editReport()
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .help("Редагувати звіт")
+            }
         }
         .padding(.vertical, 6)
         .alert("Не вдалося відновити чернетку", isPresented: Binding(
@@ -244,6 +262,15 @@ private struct RecentActivityRow: View {
             Button("Гаразд", role: .cancel) { resumeAlertMessage = nil }
         } message: {
             Text(resumeAlertMessage ?? "")
+        }
+        // Phase 11.4 — same idiom, driven by editReport() below.
+        .alert("Не вдалося оновити звіт", isPresented: Binding(
+            get: { editAlertMessage != nil },
+            set: { if !$0 { editAlertMessage = nil } }
+        )) {
+            Button("Гаразд", role: .cancel) { editAlertMessage = nil }
+        } message: {
+            Text(editAlertMessage ?? "")
         }
     }
 
@@ -264,6 +291,27 @@ private struct RecentActivityRow: View {
                 resumeAlertMessage = "Файл запису відсутній на диску — відновити чернетку неможливо."
             case .reportAlreadyOpen:
                 resumeAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
+            }
+        }
+    }
+
+    // Phase 11.4 — identical logic to RecordingsView's RecordingRow
+    // .editReport(); duplicated for the same reason resumeDraft() is above.
+    private func editReport() {
+        guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+        let id = entry.id
+        Task {
+            switch await coordinator.editReport(entryID: id) {
+            case .succeeded, .interrupted:
+                break
+            case .notFound:
+                editAlertMessage = "Цей запис більше не знайдено в історії."
+            case .noTelegramMessage:
+                editAlertMessage = "Цей запис ще не надсилався в Telegram — редагувати нічого."
+            case .reportAlreadyOpen:
+                editAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
+            case .failed(let reason):
+                editAlertMessage = reason
             }
         }
     }

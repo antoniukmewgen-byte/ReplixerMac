@@ -61,6 +61,12 @@ private struct RecordingRow: View {
     // same as any other pending-report request driven by `ContentView`).
     @State private var resumeAlertMessage: String?
 
+    // Phase 11.4 — surfaces `editReport`'s non-`.succeeded`/`.interrupted`
+    // outcomes, same reasoning as `resumeAlertMessage` above. Windows
+    // parity: `RecordingItemView.xaml`'s "Редагувати" button surfacing
+    // `EditEntryReportAsync`'s failure cases via a message box.
+    @State private var editAlertMessage: String?
+
     var body: some View {
         HStack(spacing: 12) {
             statusIcon
@@ -126,6 +132,20 @@ private struct RecordingRow: View {
                 }
                 .help("Відкрити на Google Drive")
             }
+
+            // Phase 11.4 — Windows parity: `RecordingItemView.xaml`'s
+            // "Редагувати" button, gated on `HasTelegramMessage` there;
+            // mirrored here via the same `telegramMessageId != nil` check
+            // `editReport` itself hard-enforces as a precondition.
+            if entry.telegramMessageId != nil {
+                Button {
+                    editReport()
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .help("Редагувати звіт")
+            }
         }
         .padding(.vertical, 4)
         // Windows parity: `RecordingItemView.xaml`'s resume-draft button
@@ -138,6 +158,15 @@ private struct RecordingRow: View {
             Button("Гаразд", role: .cancel) { resumeAlertMessage = nil }
         } message: {
             Text(resumeAlertMessage ?? "")
+        }
+        // Phase 11.4 — same idiom, driven by `editReport()` below.
+        .alert("Не вдалося оновити звіт", isPresented: Binding(
+            get: { editAlertMessage != nil },
+            set: { if !$0 { editAlertMessage = nil } }
+        )) {
+            Button("Гаразд", role: .cancel) { editAlertMessage = nil }
+        } message: {
+            Text(editAlertMessage ?? "")
         }
     }
 
@@ -164,6 +193,31 @@ private struct RecordingRow: View {
                 resumeAlertMessage = "Файл запису відсутній на диску — відновити чернетку неможливо."
             case .reportAlreadyOpen:
                 resumeAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
+            }
+        }
+    }
+
+    // Phase 11.4 — Windows parity: `RecordingsViewModel.EditReportCommand`.
+    private func editReport() {
+        guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+        let id = entry.id
+        Task {
+            switch await coordinator.editReport(entryID: id) {
+            case .succeeded, .interrupted:
+                // .succeeded: RecordingHistory's didChange notification
+                // already refreshes the row. .interrupted: another call
+                // bumped this edit form before submission — nothing changed,
+                // not worth a separate alert (same reasoning as
+                // resumeDraft()'s .interrupted case above).
+                break
+            case .notFound:
+                editAlertMessage = "Цей запис більше не знайдено в історії."
+            case .noTelegramMessage:
+                editAlertMessage = "Цей запис ще не надсилався в Telegram — редагувати нічого."
+            case .reportAlreadyOpen:
+                editAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
+            case .failed(let reason):
+                editAlertMessage = reason
             }
         }
     }

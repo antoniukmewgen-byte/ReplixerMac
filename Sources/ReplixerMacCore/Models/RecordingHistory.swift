@@ -155,12 +155,13 @@ public final class RecordingHistory {
     }
 
     /// Phase 10.0: records the caption a just-finished (or just-retried)
-    /// upload used/will use — either a submitted call-report's
-    /// `formatCaption()`, or the generic fallback when no report form was
-    /// shown. Set once, right before the corresponding upload attempt
-    /// kicks off, so `beginRetryCandidates`'s callers can reuse the exact
-    /// same text on a later retry instead of reconstructing a different
-    /// (report-less) one.
+    /// upload used/will use, for the case where no report form was shown at
+    /// all (the generic "Запис дзвінку: {fileName}" fallback) — a
+    /// *submitted* call-report's caption goes through `updateReportData`
+    /// instead, since that also has `reportData` itself to persist. Set
+    /// once, right before the corresponding upload attempt kicks off, so
+    /// `beginRetryCandidates`'s callers can reuse the exact same text on a
+    /// later retry instead of reconstructing a different (report-less) one.
     func updateCaption(id: UUID, caption: String) {
         mutate { entries in
             guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
@@ -176,13 +177,58 @@ public final class RecordingHistory {
     /// already-succeeded step it was told to skip comes back unchanged, not
     /// nil), so there's never a need to distinguish "don't touch" from
     /// "set to nil/false" here.
-    func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool) {
+    func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool, kommoNoteId: Int64?) {
         mutate { entries in
             guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
             entries[index].driveUrl = driveUrl
             entries[index].driveFailed = driveFailed
             entries[index].telegramMessageId = telegramMessageId
             entries[index].telegramFailed = telegramFailed
+            entries[index].kommoNoteId = kommoNoteId
+            return true
+        }
+    }
+
+    /// Records a submitted call-report's data alongside its formatted
+    /// caption. Two call sites:
+    ///
+    /// - `finishRecording`/`resumeDraft`'s `.submitted` branch — persists
+    ///   the just-filled-in report so a later `editReport` has something to
+    ///   prefill the form with (before this existed, only `caption` was
+    ///   saved via `updateCaption`, and `entry.reportData` stayed `nil`
+    ///   forever, leaving the edit form empty).
+    /// - `CallRecordingCoordinator.editReport`'s full-success path —
+    ///   Windows parity: `HomeViewModel.EditEntryReportAsync`'s `entry
+    ///   .ReportData = newData;`. Only called once both the
+    ///   Telegram-caption-edit and Kommo-note-edit legs succeed (or were
+    ///   skipped) — a partial failure leaves the entry's old `reportData`/
+    ///   `caption` in place rather than recording a caption that doesn't
+    ///   actually match what's sitting in Telegram/Kommo.
+    ///
+    /// `kommoNoteId` is deliberately left untouched here either way —
+    /// nothing about submitting/editing report text creates a *new* Kommo
+    /// note, so there's never a new id to record.
+    func updateReportData(id: UUID, reportData: CallReportData, caption: String) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].reportData = reportData
+            entries[index].caption = caption
+            return true
+        }
+    }
+
+    /// Phase 11.4 — Windows parity: `EditEntryReportAsync`'s `entry
+    /// .TelegramMessageId = null;` when the Telegram edit comes back with
+    /// `TelegramUploadService.MessageDeletedWarning` — the message was
+    /// deleted out from under the app (e.g. by hand in the Telegram app
+    /// itself), so the stored id no longer points at anything editable.
+    /// Cleared unconditionally, independent of whether the rest of the edit
+    /// (Kommo's leg) succeeded — same as Windows checking this before its
+    /// `tgError is null && kommoError is null` success branch.
+    func clearTelegramMessageId(id: UUID) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].telegramMessageId = nil
             return true
         }
     }

@@ -30,6 +30,27 @@ enum TelegramUploadService {
         case missingChatId
     }
 
+    /// Phase 11.4 — thrown by `editCaption` when TDLib reports the target
+    /// message no longer exists (edited/deleted out from under the app —
+    /// Windows parity source: `TelegramUploadService.EditMessageAsync`'s
+    /// `RpcException` catch on `MESSAGE_ID_INVALID`). Distinct from every
+    /// other edit failure so `CallRecordingCoordinator.editReport` can react
+    /// specifically to this one case (clear the entry's stored
+    /// `telegramMessageId`) instead of treating it like any other transient
+    /// error.
+    enum EditCaptionError: Swift.Error {
+        case messageDeleted
+    }
+
+    /// Windows parity: `TelegramUploadService.MessageDeletedWarning` — the
+    /// exact string `CallRecordingCoordinator.editReport` checks its
+    /// Telegram-edit result against to decide whether to clear
+    /// `RecordingEntry.telegramMessageId`. Kept as the human-readable string
+    /// itself (not just the `EditCaptionError` case) because `editReport`
+    /// aggregates this alongside Kommo's own `String?`-warning return shape
+    /// into one combined error message shown to the user.
+    static let messageDeletedWarning = "Telegram: повідомлення видалено з чату (можливо, його прибрали вручну)"
+
     /// Sends `filePath` (expected to be a finished .m4a recording) to
     /// `AppSettings.shared.telegramChatId`/`telegramTopicId`. `caption` is
     /// the message text (Windows default: `"Запис дзвінку: {fileName}"`,
@@ -109,14 +130,34 @@ enum TelegramUploadService {
     /// `sendRecording`) — this is a best-effort cosmetic fixup the caller
     /// treats as non-fatal; the recording is already safely uploaded to
     /// both destinations either way.
+    /// Phase 11.4 addition: now also recognizes two specific TDLib RPC
+    /// errors instead of letting every failure surface identically —
+    /// Windows parity source: `EditMessageAsync`'s own `RpcException` catch
+    /// clauses on `MESSAGE_ID_INVALID`/`MESSAGE_NOT_MODIFIED`.
+    ///
+    /// Not ported: Windows' `RpcException` code-401 catch
+    /// (`HandleAuthKeyUnregistered` — invalidates the session so the next
+    /// call re-prompts for login). No Swift equivalent exists yet for
+    /// forcibly invalidating a live `TelegramAuthClient` mid-session; a 401
+    /// here just falls through to the generic rethrow below and surfaces as
+    /// an ordinary edit failure, same as any other unrecognized RPC error.
     static func editCaption(messageId: Int64, chatId: Int64, caption: String, driveUrl: String?, authClient: TelegramAuthClient) async throws {
-        _ = try await authClient.client.editMessageCaption(
-            caption: FormattedText(entities: [], text: buildCaption(caption, driveUrl: driveUrl)),
-            chatId: chatId,
-            messageId: messageId,
-            replyMarkup: nil,
-            showCaptionAboveMedia: false
-        )
+        do {
+            _ = try await authClient.client.editMessageCaption(
+                caption: FormattedText(entities: [], text: buildCaption(caption, driveUrl: driveUrl)),
+                chatId: chatId,
+                messageId: messageId,
+                replyMarkup: nil,
+                showCaptionAboveMedia: false
+            )
+        } catch let error as TDLibKit.Error where error.message == "MESSAGE_ID_INVALID" {
+            throw EditCaptionError.messageDeleted
+        } catch let error as TDLibKit.Error where error.message == "MESSAGE_NOT_MODIFIED" {
+            // Soft success — caption byte-identical to what's already there,
+            // nothing to actually edit. Windows parity: EditMessageAsync's
+            // same-named catch returning null (its "no error" value).
+            return
+        }
     }
 
     /// Windows parity: `BuildCaption` appends `"\n💾 Google Drive: {url}"`

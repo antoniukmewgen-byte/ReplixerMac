@@ -57,6 +57,16 @@ public struct RecordingEntry: Codable, Identifiable {
     // badge when these are set, same as Windows' RecordingItemView.
     public internal(set) var driveUrl: String?
     public internal(set) var telegramMessageId: Int64?
+    // Phase 11.4: the Kommo note created for this recording, if any — mirrors
+    // telegramMessageId's role (a persisted handle for a later *edit*, not
+    // just "was this step done"), Windows parity source: `RecordingEntry.cs`'s
+    // `KommoNoteId`. Populated once, right after `KommoService.addNote`
+    // succeeds (see `UploadOrchestrator.attemptKommo`); an edit
+    // (`CallRecordingCoordinator.editReport`) PATCHes the note this id
+    // already points at rather than ever creating a second one. nil for any
+    // entry written before this field existed, or whose note was never
+    // created (Kommo not configured, or no crmUrl was ever submitted).
+    public internal(set) var kommoNoteId: Int64?
     // "This step was attempted and failed" — distinct from driveUrl/
     // telegramMessageId being nil, which can also mean "not configured,
     // never attempted". Only these flags tell UploadOrchestrator/
@@ -99,6 +109,7 @@ public struct RecordingEntry: Codable, Identifiable {
         self.callDuration = 0
         self.driveUrl = nil
         self.telegramMessageId = nil
+        self.kommoNoteId = nil
         self.driveFailed = false
         self.telegramFailed = false
         self.caption = nil
@@ -108,7 +119,7 @@ public struct RecordingEntry: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, platform, startedAt, filePath, status, callDuration
         case driveUrl, telegramMessageId, driveFailed, telegramFailed
-        case caption, reportData
+        case caption, reportData, kommoNoteId
         // isBackgroundRetrying intentionally omitted from CodingKeys — see
         // its doc comment above.
     }
@@ -128,6 +139,7 @@ public struct RecordingEntry: Codable, Identifiable {
         callDuration = try container.decode(TimeInterval.self, forKey: .callDuration)
         driveUrl = try container.decodeIfPresent(String.self, forKey: .driveUrl)
         telegramMessageId = try container.decodeIfPresent(Int64.self, forKey: .telegramMessageId)
+        kommoNoteId = try container.decodeIfPresent(Int64.self, forKey: .kommoNoteId)
         driveFailed = try container.decodeIfPresent(Bool.self, forKey: .driveFailed) ?? false
         telegramFailed = try container.decodeIfPresent(Bool.self, forKey: .telegramFailed) ?? false
         caption = try container.decodeIfPresent(String.self, forKey: .caption)
@@ -144,6 +156,7 @@ public struct RecordingEntry: Codable, Identifiable {
         try container.encode(callDuration, forKey: .callDuration)
         try container.encodeIfPresent(driveUrl, forKey: .driveUrl)
         try container.encodeIfPresent(telegramMessageId, forKey: .telegramMessageId)
+        try container.encodeIfPresent(kommoNoteId, forKey: .kommoNoteId)
         try container.encode(driveFailed, forKey: .driveFailed)
         try container.encode(telegramFailed, forKey: .telegramFailed)
         try container.encodeIfPresent(caption, forKey: .caption)
