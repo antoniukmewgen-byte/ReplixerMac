@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Combine
 import ReplixerMacCore
 
@@ -9,15 +10,18 @@ import ReplixerMacCore
 /// `ReplixerMacApp`'s `AppDelegate` — Windows parity: `CallDialogViewModel`)
 /// and manual start/stop now exists (the button below, Windows parity:
 /// `IdleCallViewModel.RecordManuallyCommand`/`ActiveCallViewModel
-/// .StopCommand`), but there's still no report form draft/interrupt
-/// recovery (Windows' `CallReportViewModel.CaptureDraft`/`RecordingStatus
-/// .Draft` — planned as Phase 11.3), no per-entry retry/edit-report actions
-/// (Phase 11.4), and no missed-calls tracking
-/// (`MissedCallReportViewModel`/`MissedCallsViewModel` — Phase 10, not
-/// built) to fold into "ОСТАННІ ЗАПИСИ". So this screen is: a live "is a
-/// call being recorded right now" status card (now with a manual
-/// start/stop button), and the 4 most recent `RecordingEntry` rows (no
-/// missed-call entries to interleave, unlike Windows' `RecentActivity`).
+/// .StopCommand`), and report form draft/interrupt recovery now exists too
+/// (Windows parity: `CallReportViewModel.CaptureDraft`/`RecordingStatus
+/// .Draft` — Phase 11.3). `RecentActivityRow` below mirrors
+/// `RecordingsView`'s `RecordingRow` icon-button row (resume-draft/Finder/
+/// Drive) for consistency between the 4-row preview here and the full
+/// history list — same Windows parity source (`RecordingItemView.xaml`)
+/// either way. Still no per-entry retry action (Phase 11.4), and no
+/// missed-calls tracking (`MissedCallReportViewModel`/`MissedCallsViewModel`
+/// — Phase 10, not built) to fold into "ОСТАННІ ЗАПИСИ". So this screen is:
+/// a live "is a call being recorded right now" status card (now with a
+/// manual start/stop button), and the 4 most recent `RecordingEntry` rows
+/// (no missed-call entries to interleave, unlike Windows' `RecentActivity`).
 struct HomeView: View {
     // Mirrors of ReplixerMacCore's two lock-protected snapshots — same
     // "local @State, refreshed via a plain NotificationCenter post"
@@ -184,6 +188,10 @@ struct HomeView: View {
 private struct RecentActivityRow: View {
     let entry: RecordingEntry
 
+    // Phase 11.3 follow-up — same purpose as RecordingRow's identically
+    // named property: surfaces resumeDraft()'s non-.started outcomes.
+    @State private var resumeAlertMessage: String?
+
     var body: some View {
         HStack(spacing: 12) {
             statusIcon
@@ -197,8 +205,67 @@ private struct RecentActivityRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+
+            // Phase 11.3 follow-up — mirrors RecordingsView's RecordingRow
+            // icon-button row so the home screen's preview offers the same
+            // actions as the full history list, not just a read-only glance.
+            if entry.status == .draft {
+                Button {
+                    resumeDraft()
+                } label: {
+                    Label("Заповнити звіт", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            if let filePath = entry.filePath, FileManager.default.fileExists(atPath: filePath) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: filePath)])
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.borderless)
+                .help("Показати у Finder")
+            }
+
+            if let driveUrlString = entry.driveUrl, let driveUrl = URL(string: driveUrlString) {
+                Link(destination: driveUrl) {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .help("Відкрити на Google Drive")
+            }
         }
         .padding(.vertical, 6)
+        .alert("Не вдалося відновити чернетку", isPresented: Binding(
+            get: { resumeAlertMessage != nil },
+            set: { if !$0 { resumeAlertMessage = nil } }
+        )) {
+            Button("Гаразд", role: .cancel) { resumeAlertMessage = nil }
+        } message: {
+            Text(resumeAlertMessage ?? "")
+        }
+    }
+
+    // Phase 11.3 follow-up — identical logic to RecordingsView's
+    // RecordingRow.resumeDraft(); duplicated rather than shared since each
+    // is a small private view-local helper, same pattern already used
+    // between the two files' statusIcon switches.
+    private func resumeDraft() {
+        guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+        let id = entry.id
+        Task {
+            switch await coordinator.resumeDraft(entryID: id) {
+            case .started, .interrupted:
+                break
+            case .notFound:
+                resumeAlertMessage = "Цей запис більше не знайдено в історії."
+            case .fileMissing:
+                resumeAlertMessage = "Файл запису відсутній на диску — відновити чернетку неможливо."
+            case .reportAlreadyOpen:
+                resumeAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
+            }
+        }
     }
 
     @ViewBuilder
@@ -213,6 +280,12 @@ private struct RecentActivityRow: View {
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
+        case .draft:
+            // Phase 11.3 — same icon/color choice as RecordingsView's
+            // statusIcon, so the 4-row "ОСТАННІ ЗАПИСИ" preview on this
+            // screen and the full history list read consistently.
+            Image(systemName: "doc.badge.clock")
+                .foregroundStyle(.yellow)
         }
     }
 }

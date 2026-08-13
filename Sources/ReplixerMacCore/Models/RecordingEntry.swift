@@ -75,6 +75,15 @@ public struct RecordingEntry: Codable, Identifiable {
     // the fact. nil for any entry written before this field existed.
     var caption: String?
 
+    // Phase 11.3: whatever the call-report form had captured — either the
+    // fully-submitted report (rare to see here; normally a submitted report
+    // goes straight to `caption`/upload and this stays nil) or the
+    // interrupted-mid-fill snapshot `CallReportRequestStore.interrupt()`
+    // returned. Only ever non-nil for a `.draft` entry; persisted (unlike
+    // the plain-@State CallReportView that produced it) so the draft
+    // survives an app restart and `resumeDraft` can prefill the form again.
+    public internal(set) var reportData: CallReportData?
+
     // Transient guard against a slow background-retry tick and a fresh
     // manual retry racing the same entry — deliberately NOT persisted (see
     // CodingKeys/init(from:)/encode(to:) below), same reasoning as Windows'
@@ -93,12 +102,13 @@ public struct RecordingEntry: Codable, Identifiable {
         self.driveFailed = false
         self.telegramFailed = false
         self.caption = nil
+        self.reportData = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, platform, startedAt, filePath, status, callDuration
         case driveUrl, telegramMessageId, driveFailed, telegramFailed
-        case caption
+        case caption, reportData
         // isBackgroundRetrying intentionally omitted from CodingKeys — see
         // its doc comment above.
     }
@@ -121,6 +131,7 @@ public struct RecordingEntry: Codable, Identifiable {
         driveFailed = try container.decodeIfPresent(Bool.self, forKey: .driveFailed) ?? false
         telegramFailed = try container.decodeIfPresent(Bool.self, forKey: .telegramFailed) ?? false
         caption = try container.decodeIfPresent(String.self, forKey: .caption)
+        reportData = try container.decodeIfPresent(CallReportData.self, forKey: .reportData)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -136,6 +147,7 @@ public struct RecordingEntry: Codable, Identifiable {
         try container.encode(driveFailed, forKey: .driveFailed)
         try container.encode(telegramFailed, forKey: .telegramFailed)
         try container.encodeIfPresent(caption, forKey: .caption)
+        try container.encodeIfPresent(reportData, forKey: .reportData)
     }
 
     // Windows parity: RecordingEntry.cs's NeedsBackgroundRetry, scoped down
@@ -146,6 +158,18 @@ public struct RecordingEntry: Codable, Identifiable {
     // here).
     var needsBackgroundRetry: Bool {
         guard driveFailed || telegramFailed else { return false }
+        guard let filePath else { return false }
+        return FileManager.default.fileExists(atPath: filePath)
+    }
+
+    /// Phase 11.3 — Windows parity: `RecordingEntry.cs`'s `HasRetryableFile`,
+    /// used to gate the "Resume draft" action: a `.draft` entry whose file
+    /// has since been moved/deleted has nothing left to actually upload
+    /// once the report is filled in, so resuming it would just fail at the
+    /// last step. Not restricted to `.draft` entries here (same shape as
+    /// `needsBackgroundRetry` above) — callers are expected to also check
+    /// `status == .draft` themselves.
+    public var hasRetryableFile: Bool {
         guard let filePath else { return false }
         return FileManager.default.fileExists(atPath: filePath)
     }

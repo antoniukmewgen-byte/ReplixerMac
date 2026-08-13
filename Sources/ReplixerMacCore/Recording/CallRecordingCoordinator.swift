@@ -242,18 +242,32 @@ public actor CallRecordingCoordinator {
     /// state either way — a failed stop() shouldn't leave `isRecording`
     /// stuck true.
     ///
-    /// `isRecording` deliberately stays true for the *entire* duration of
-    /// this method, including the report-form await — mac has no
-    /// Windows-style draft/interrupt handling for a second call arriving
-    /// while a report is still open (see `RecordingsView`'s "no `.draft`
-    /// status" doc comment), so keeping the guard up for that whole window
-    /// means a genuinely overlapping call is simply dropped by
-    /// `callStarted`'s existing guard rather than silently corrupting
-    /// state. `RecordingStatusStore` is still reset to `.idle` immediately
-    /// after the encoder stops, independent of how long the report form
-    /// stays open — matching Windows' `StopRecordingAsync`, which flips
-    /// `CallContent` back to idle right away and lets the report dialog
-    /// float on top rather than block the "idle" UI state from showing.
+    /// Phase 11.3 — Windows parity (`StopRecordingAsync`'s `_isRecording =
+    /// false` right at the top, before either awaited task starts):
+    /// `isRecording`/`currentEntryID`/`currentPlatform`/`currentCallStartedAt`
+    /// are captured into locals and reset *before* the report-form await
+    /// below, not after it — so a brand-new call arriving while the old
+    /// report is still open isn't wrongly rejected by `callStarted`'s `guard
+    /// !isRecording`. This is safe specifically because `AudioMixerEncoder
+    /// .stop()` already ran synchronously above, before any `await` in this
+    /// method — the encoder itself is free the instant this method's first
+    /// line returns, so there's no hardware conflict for a new call's
+    /// `AudioMixerEncoder.start()` to hit, only the (now-lifted) actor-level
+    /// flag. Because this actor allows reentrancy across `await` points, a
+    /// concurrent `beginRecording` genuinely can run while this method is
+    /// suspended at the report await — reading `self.currentEntryID`/etc.
+    /// again after that point would then risk picking up the *new* call's
+    /// values instead of this (finishing) call's own, which is exactly what
+    /// capturing locals first prevents.
+    ///
+    /// If a new call *does* arrive before the user submits the form,
+    /// `ReplixerMacApp`'s `AppDelegate` calls `CallReportRequestStore.shared
+    /// .interrupt()` before showing that call's confirm dialog (Windows
+    /// parity: `ShowDialog` -> `DismissCallReport(interrupted: true)`) —
+    /// `requestReport` below then returns `.interrupted(draft:)` instead of
+    /// `.submitted(_:)`, and this method marks the entry `.draft` and skips
+    /// upload entirely, same as `StopRecordingAsync`'s `wasInterrupted`
+    /// branch.
     ///
     /// - Parameter requestReport: `false` from `shutdown()` — quitting
     ///   must not hang waiting on a report dialog nobody may ever answer.
@@ -261,30 +275,30 @@ public actor CallRecordingCoordinator {
         let finalURL = AudioMixerEncoder.stop()
         RecordingStatusStore.shared.update(.idle)
 
-        guard let currentEntryID else {
+        guard let entryID = currentEntryID else {
             isRecording = false
             currentPlatform = nil
             currentCallStartedAt = nil
             return
         }
+        let platform = currentPlatform ?? ""
+        // Frozen here (before the reset below) — Phase 10.1b's Kommo
+        // call-metadata leg (first-contact date/processing speed) needs the
+        // actual call-start `Date`, not just the already-computed
+        // `duration` interval.
+        let callStartedAt = currentCallStartedAt
+        self.currentEntryID = nil
+        currentPlatform = nil
+        currentCallStartedAt = nil
+        isRecording = false
 
         guard let finalURL else {
-            RecordingHistory.shared.markFailed(id: currentEntryID)
-            self.currentEntryID = nil
-            currentPlatform = nil
-            currentCallStartedAt = nil
-            isRecording = false
+            RecordingHistory.shared.markFailed(id: entryID)
             return
         }
 
-        RecordingHistory.shared.markFinished(id: currentEntryID, filePath: finalURL.path)
+        RecordingHistory.shared.markFinished(id: entryID, filePath: finalURL.path)
 
-        let platform = currentPlatform ?? ""
-        // Frozen here (before the `currentCallStartedAt = nil` reset below)
-        // — Phase 10.1b's Kommo call-metadata leg (first-contact date/
-        // processing speed) needs the actual call-start `Date`, not just
-        // the already-computed `duration` interval.
-        let callStartedAt = currentCallStartedAt
         let duration = callStartedAt.map { Date().timeIntervalSince($0) } ?? 0
 
         // Windows parity (HomeViewModel.StopRecordingAsync): only bother
@@ -307,14 +321,30 @@ public actor CallRecordingCoordinator {
         let kommoConfigured = AppSettings.shared.kommoSubdomain != nil && AppSettings.shared.kommoApiToken != nil
         let needsForm = requestReport && (wantsTelegram || kommoConfigured)
 
-        let reportData: CallReportData? = needsForm
+        let reportOutcome: CallReportRequestStore.Outcome? = needsForm
             ? await CallReportRequestStore.shared.requestReport(platform: platform, duration: duration)
             : nil
+
+        // Phase 11.3 — Windows parity: StopRecordingAsync's `wasInterrupted`
+        // branch. No upload at all; just persist whatever was captured as a
+        // resumable draft and stop here.
+        if case .interrupted(let draft) = reportOutcome {
+            RecordingHistory.shared.markDraft(id: entryID, reportData: draft)
+            print("[CallRecordingCoordinator] 📝 форма звіту перервана новим дзвінком — запис збережено як чернетку.")
+            return
+        }
+
+        let reportData: CallReportData?
+        if case .submitted(let data) = reportOutcome {
+            reportData = data
+        } else {
+            reportData = nil
+        }
 
         let fileName = finalURL.lastPathComponent
         let caption = reportData?.formatCaption(appName: platform, duration: duration)
             ?? "Запис дзвінку: \(fileName)"
-        RecordingHistory.shared.updateCaption(id: currentEntryID, caption: caption)
+        RecordingHistory.shared.updateCaption(id: entryID, caption: caption)
 
         let skipTelegram = PositionPolicy.shouldSkipTelegram(position, duration: duration)
 
@@ -323,9 +353,7 @@ public actor CallRecordingCoordinator {
         // callEnded()) must return promptly so a rapid subsequent call
         // isn't wrongly rejected by the `isRecording` guard while a slow
         // upload is still running. shutdown() drains this task before
-        // closing the TDLib client. Captured explicitly (not read back
-        // from `self` inside the Task) because `currentEntryID` gets reset
-        // to nil right below, before the Task body ever runs.
+        // closing the TDLib client.
         //
         // crmUrl (Phase 10.1a) rides along the same Task now — since the
         // rework, UploadOrchestrator.run itself waits for Drive before
@@ -337,7 +365,6 @@ public actor CallRecordingCoordinator {
         // substitution already applied — see `CallReportData.resolvedCallType`),
         // matching what Windows' `HomeViewModel.ResolveCallType` feeds
         // `KommoService.ProcessLeadAsync`'s `callType` parameter.
-        let entryID = currentEntryID
         let crmUrl = reportData?.crmUrl
         let callType = reportData?.resolvedCallType
         pendingUploadTask = Task { [weak self] in
@@ -345,11 +372,103 @@ public actor CallRecordingCoordinator {
                 fileURL: finalURL, entryID: entryID, caption: caption, crmUrl: crmUrl,
                 callStartedAt: callStartedAt, callType: callType, skipTelegram: skipTelegram)
         }
+    }
 
-        self.currentEntryID = nil
-        currentPlatform = nil
-        currentCallStartedAt = nil
-        isRecording = false
+    /// Phase 11.3 — Windows parity: `HomeViewModel.ResumeDraftAsync`.
+    /// Re-opens the call-report form (prefilled from whatever was captured
+    /// when the draft was interrupted) for a `.draft` entry, and on submit
+    /// runs the same upload path `finishRecording` would have run
+    /// originally. Deliberately doesn't touch `isRecording`/`currentEntryID`
+    /// /etc. — resuming a draft isn't "a call", just a delayed report+upload
+    /// for one that already fully finished recording, so it can safely run
+    /// whether or not a brand-new call is being recorded at the same time.
+    public enum ResumeDraftOutcome: Equatable, Sendable {
+        case started
+        case notFound
+        case fileMissing
+        /// Another report form (this call's own resumed one, or a
+        /// brand-new call's) is already open — `CallReportRequestStore`
+        /// only tracks one pending request at a time, so refusing here
+        /// avoids silently orphaning whichever one is already in flight.
+        case reportAlreadyOpen
+        /// The resumed form itself got interrupted by yet another call
+        /// before being submitted — the entry stays `.draft` (with its
+        /// snapshot updated to whatever was captured this time), ready to
+        /// be resumed again later.
+        case interrupted
+    }
+
+    public func resumeDraft(entryID: UUID) async -> ResumeDraftOutcome {
+        guard let entry = RecordingHistory.shared.entries.first(where: { $0.id == entryID }) else {
+            return .notFound
+        }
+        guard entry.status == .draft, entry.hasRetryableFile, let filePath = entry.filePath else {
+            return .fileMissing
+        }
+        guard CallReportRequestStore.shared.pending == nil else {
+            return .reportAlreadyOpen
+        }
+
+        let fileURL = URL(fileURLWithPath: filePath)
+        let outcome = await CallReportRequestStore.shared.requestReport(
+            platform: entry.platform, duration: entry.callDuration, existing: entry.reportData)
+
+        switch outcome {
+        case .interrupted(let draft):
+            RecordingHistory.shared.markDraft(id: entryID, reportData: draft)
+            return .interrupted
+        case .submitted(let reportData):
+            let caption = reportData.formatCaption(appName: entry.platform, duration: entry.callDuration)
+            RecordingHistory.shared.updateCaption(id: entryID, caption: caption)
+            let skipTelegram = PositionPolicy.shouldSkipTelegram(AppSettings.shared.position, duration: entry.callDuration)
+            let crmUrl = reportData.crmUrl
+            let callType = reportData.resolvedCallType
+            let callStartedAt = entry.startedAt
+            pendingUploadTask = Task { [weak self] in
+                await self?.resumeDraftUpload(
+                    fileURL: fileURL, entryID: entryID, caption: caption, crmUrl: crmUrl,
+                    callStartedAt: callStartedAt, callType: callType, skipTelegram: skipTelegram)
+            }
+            return .started
+        }
+    }
+
+    /// Phase 11.3 — same Drive/Telegram/Kommo orchestration as
+    /// `uploadRecording`, plus flipping the entry's status from `.draft` to
+    /// `.saved`/`.error` once the attempt finishes (Windows parity:
+    /// `ResumeDraftAsync` setting `entry.Status = RecordingStatus.Saved`/
+    /// `.Error` after its own upload orchestration completes).
+    /// `uploadRecording` itself never touches `.status` because the normal
+    /// `finishRecording` path already set it to `.saved` up front, before
+    /// the report form even opens — a resumed draft has no such earlier
+    /// `.saved` write to rely on, so this does it explicitly at the end
+    /// instead.
+    private func resumeDraftUpload(
+        fileURL: URL, entryID: UUID, caption: String, crmUrl: String?,
+        callStartedAt: Date?, callType: String?, skipTelegram: Bool
+    ) async {
+        let client = await telegramClient()
+
+        let result = await UploadOrchestrator.run(
+            filePath: fileURL.path,
+            caption: caption,
+            crmUrl: crmUrl,
+            callStartedAt: callStartedAt,
+            callType: callType,
+            existingDriveUrl: nil,
+            existingTelegramMessageId: nil,
+            telegramClient: client,
+            skipTelegram: skipTelegram
+        )
+
+        RecordingHistory.shared.updateUploadState(
+            id: entryID,
+            driveUrl: result.driveUrl,
+            driveFailed: result.driveFailed,
+            telegramMessageId: result.telegramMessageId,
+            telegramFailed: result.telegramFailed
+        )
+        RecordingHistory.shared.markDraftResolved(id: entryID, succeeded: !result.driveFailed && !result.telegramFailed)
     }
 
     /// Phase 5.3/6/10.1a/10.1b: runs the configured Drive/Telegram/Kommo

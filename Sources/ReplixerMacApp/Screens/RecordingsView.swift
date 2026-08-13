@@ -6,11 +6,21 @@ import ReplixerMacCore
 /// Phase 7.4 — Windows parity source: `RecordingsViewModel.cs` +
 /// `RecordingItemView.xaml`. Scoped to what mac's `RecordingEntry` actually
 /// tracks: platform, start time, status, duration, Drive link, Telegram
-/// send state. Windows' per-row retry/resume-draft/edit-report buttons stay
-/// out — mac has no `.draft` status and no editable Telegram report (both
-/// Phase 6/10-specific concepts not built here); background retry already
-/// happens automatically via `PendingUploadRetryService`, so there's no
-/// "retry now" action to expose either.
+/// send state. Background retry already happens automatically via
+/// `PendingUploadRetryService`, so there's no manual "retry now" action to
+/// expose; no editable Telegram report either (Phase 10-specific concept
+/// not built here).
+///
+/// Phase 11.3 update: mac *does* now have a `.draft` status (a call whose
+/// report form was interrupted by a new call before being submitted, see
+/// `RecordingStatus.draft`) — `RecordingRow` below surfaces a "Заповнити
+/// звіт" button directly in the row, same intent as Windows' per-row
+/// resume-draft button.
+///
+/// Phase 11.3 follow-up: all row actions (resume-draft, show-in-Finder,
+/// open-on-Drive) are now always-visible icon buttons, matching Windows'
+/// `RecordingItemView.xaml` row of buttons — no context menu, right-click
+/// isn't discoverable enough to be the only way to reach these.
 struct RecordingsView: View {
     // ReplixerMacCore stays headless/SwiftUI-free (Phase 7 architecture
     // split), so RecordingHistory can't be @ObservedObject — mirror its
@@ -46,6 +56,11 @@ struct RecordingsView: View {
 private struct RecordingRow: View {
     let entry: RecordingEntry
 
+    // Phase 11.3 — surfaces `resumeDraft`'s non-`.started` outcomes (the
+    // "started" case needs no feedback here: the report sheet just opens,
+    // same as any other pending-report request driven by `ContentView`).
+    @State private var resumeAlertMessage: String?
+
     var body: some View {
         HStack(spacing: 12) {
             statusIcon
@@ -75,6 +90,36 @@ private struct RecordingRow: View {
                     .monospacedDigit()
             }
 
+            // Phase 11.3 — the main way most drafts actually get resolved,
+            // so it gets the prominent/labeled button style, unlike the
+            // secondary Finder/Drive icon-only buttons below. Windows
+            // parity: `RecordingItemView.xaml`'s always-visible resume-draft
+            // button on a `.draft` row.
+            if entry.status == .draft {
+                Button {
+                    resumeDraft()
+                } label: {
+                    Label("Заповнити звіт", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            // Phase 11.3 follow-up — visible counterpart of the old
+            // context-menu "Показати у Finder" entry, same reasoning as the
+            // draft-resume button above: right-click alone isn't
+            // discoverable enough, Windows parity keeps this as a row icon
+            // button.
+            if let filePath = entry.filePath, FileManager.default.fileExists(atPath: filePath) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: filePath)])
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.borderless)
+                .help("Показати у Finder")
+            }
+
             if let driveUrlString = entry.driveUrl, let driveUrl = URL(string: driveUrlString) {
                 Link(destination: driveUrl) {
                     Image(systemName: "arrow.up.right.square")
@@ -83,16 +128,42 @@ private struct RecordingRow: View {
             }
         }
         .padding(.vertical, 4)
-        .contextMenu {
-            if let filePath = entry.filePath, FileManager.default.fileExists(atPath: filePath) {
-                Button("Показати у Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: filePath)])
-                }
-            }
-            if let driveUrlString = entry.driveUrl, let driveUrl = URL(string: driveUrlString) {
-                Button("Відкрити на Google Drive") {
-                    NSWorkspace.shared.open(driveUrl)
-                }
+        // Windows parity: `RecordingItemView.xaml`'s resume-draft button
+        // surfacing `ResumeDraftAsync`'s failure cases via a message box —
+        // mac's equivalent is this alert, driven by `resumeDraft()` below.
+        .alert("Не вдалося відновити чернетку", isPresented: Binding(
+            get: { resumeAlertMessage != nil },
+            set: { if !$0 { resumeAlertMessage = nil } }
+        )) {
+            Button("Гаразд", role: .cancel) { resumeAlertMessage = nil }
+        } message: {
+            Text(resumeAlertMessage ?? "")
+        }
+    }
+
+    // Phase 11.3 — Windows parity: `RecordingsViewModel.ResumeDraftCommand`.
+    // `CallRecordingCoordinator.appInstance` nil-check mirrors the same
+    // idiom `HomeView.startManually()` uses.
+    private func resumeDraft() {
+        guard let coordinator = CallRecordingCoordinator.appInstance else { return }
+        let id = entry.id
+        Task {
+            switch await coordinator.resumeDraft(entryID: id) {
+            case .started, .interrupted:
+                // .started: the report sheet opens on its own via
+                // ContentView's CallReportRequestStore observation, nothing
+                // more to do here. .interrupted: another call bumped this
+                // resumed form before submission — the entry just goes back
+                // to `.draft`, resumable again later, same as the first
+                // interruption; not worth a separate alert for what's really
+                // the normal draft state.
+                break
+            case .notFound:
+                resumeAlertMessage = "Цей запис більше не знайдено в історії."
+            case .fileMissing:
+                resumeAlertMessage = "Файл запису відсутній на диску — відновити чернетку неможливо."
+            case .reportAlreadyOpen:
+                resumeAlertMessage = "Зараз відкрита інша форма звіту. Заверши її й спробуй ще раз."
             }
         }
     }
@@ -109,6 +180,9 @@ private struct RecordingRow: View {
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
+        case .draft:
+            Image(systemName: "doc.badge.clock")
+                .foregroundStyle(.yellow)
         }
     }
 

@@ -86,6 +86,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 let alreadyRecording = await coordinator.isRecordingNow
                 guard !alreadyRecording else { return }
                 guard CallConfirmRequestStore.shared.pending == nil else { return }
+                // Phase 11.3 — Windows parity: `ShowDialog`'s unconditional
+                // `DismissCallReport(interrupted: true)` before ever showing
+                // a new start/end confirm dialog. A no-op the vast majority
+                // of the time (no report form open), but guarantees a report
+                // form from a still-finishing earlier call never gets left
+                // stranded behind a fresh confirm dialog on top of it.
+                CallReportRequestStore.shared.interrupt()
                 let confirmed = await CallConfirmRequestStore.shared.requestConfirmation(
                     kind: .start, platform: name)
                 guard confirmed else { return }
@@ -99,6 +106,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 // parity: OnCallEnded's `if (!_isRecording) { DismissDialog(); return; }`.
                 guard await coordinator.isRecordingNow else { return }
                 guard CallConfirmRequestStore.shared.pending == nil else { return }
+                // Phase 11.3 — same reasoning as onCallStarted above.
+                CallReportRequestStore.shared.interrupt()
                 let confirmed = await CallConfirmRequestStore.shared.requestConfirmation(
                     kind: .end, platform: name, recordingStartedAt: RecordingStatusStore.shared.status.startedAt)
                 guard confirmed else { return }

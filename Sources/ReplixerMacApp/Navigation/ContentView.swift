@@ -17,18 +17,54 @@ struct ContentView: View {
     // isSetupComplete out from under a running window).
     @State private var showingSetupWizard = !AppSettings.shared.isSetupComplete
 
-    // Phase 10.0: mirrors CallReportRequestStore.shared.pending, same
-    // headless-core-can't-be-ObservedObject reasoning as RecordingsView's
-    // `entries`/RecordingHistory.didChangeNotification pair — except this
-    // one drives `.sheet(item:)` instead of a list refresh, since
-    // `PendingRequest` carries the identity SwiftUI needs to know which
-    // request (if any) to present.
-    @State private var pendingReport: CallReportRequestStore.PendingRequest?
+    // Phase 11.3 fix: report and confirm used to be two *independent*
+    // `.sheet(item:)` modifiers, each mirroring its own store's `pending`
+    // into its own @State. That's exactly the setup SwiftUI's "Currently,
+    // only presenting a single sheet is supported" runtime warning targets
+    // — when `CallReportRequestStore.interrupt()` clears `pendingReport`
+    // and the very next line (`CallConfirmRequestStore.requestConfirmation`)
+    // sets `pendingConfirm`, both @State writes land close enough together
+    // (both hopping over from a background Task via `receive(on: .main)`)
+    // that SwiftUI sees two competing sheet-presentation requests instead
+    // of one clean "dismiss, then present" handoff — the confirm sheet
+    // then silently never appears, `requestConfirmation` hangs forever
+    // awaiting a click nobody can make, and the interrupted call never
+    // even reaches `markDraft` because the whole chain is stuck upstream
+    // of it.
+    //
+    // Fix: a single `@State` driving a single `.sheet(item:)`, presenting
+    // one of two cases. Switching an *existing* `.sheet(item:)`'s item to a
+    // different identity is the officially-supported "swap sheet content"
+    // path — SwiftUI itself sequences the dismiss-then-present handoff,
+    // rather than two independent sheet lifecycles racing each other.
+    private enum ActiveCallSheet: Identifiable {
+        case report(CallReportRequestStore.PendingRequest)
+        case confirm(CallConfirmRequestStore.PendingRequest)
 
-    // Phase 11.1: same mirror-a-store-into-@State pattern as `pendingReport`
-    // above, driving the "call detected/ended — record?" confirm dialog
-    // instead of the post-call report form.
-    @State private var pendingConfirm: CallConfirmRequestStore.PendingRequest?
+        var id: UUID {
+            switch self {
+            case .report(let request): return request.id
+            case .confirm(let request): return request.id
+            }
+        }
+    }
+
+    // Report takes priority if (in principle) both stores somehow had a
+    // pending request at the same instant — matches the real-world
+    // sequencing (`interrupt()` always clears the report *before* a new
+    // confirm request is even created), so this is a defensive tie-break,
+    // not something expected to actually matter in practice.
+    @State private var activeCallSheet: ActiveCallSheet?
+
+    private func refreshActiveCallSheet() {
+        if let report = CallReportRequestStore.shared.pending {
+            activeCallSheet = .report(report)
+        } else if let confirm = CallConfirmRequestStore.shared.pending {
+            activeCallSheet = .confirm(confirm)
+        } else {
+            activeCallSheet = nil
+        }
+    }
 
     // Tracks the window's actual content size so the call-report sheet
     // below can be sized *relative to it* (height = window height minus a
@@ -94,46 +130,45 @@ struct ContentView: View {
             SetupWizardView(onFinish: { showingSetupWizard = false })
                 .interactiveDismissDisabled()
         }
-        // Phase 10.0: the blocking call-report form — CallRecordingCoordinator
-        // is off somewhere suspended in `withCheckedContinuation` waiting for
-        // CallReportView's submit button to call
-        // `CallReportRequestStore.shared.submit(_:)`, which clears `pending`
-        // and (via the notification below) dismisses this sheet on its own.
-        // interactiveDismissDisabled for the same reason as the setup wizard
-        // — Windows has no "close without reporting" affordance here either.
+        // Phase 10.0/11.1, unified Phase 11.3 (see `ActiveCallSheet`'s doc
+        // comment above for why this used to be two separate `.sheet(item:)`
+        // modifiers and no longer is): presents either the blocking
+        // call-report form — CallRecordingCoordinator is off somewhere
+        // suspended in `withCheckedContinuation` waiting for CallReportView's
+        // submit button to call `CallReportRequestStore.shared.submit(_:)`
+        // (or for `interrupt()` to resolve it instead) — or the "record this
+        // call?"/"stop recording?" confirm dialog. Both still
+        // `interactiveDismissDisabled()` for the same reason as the setup
+        // wizard — Windows has no "close without answering" affordance for
+        // either.
         //
-        // Height pinned to the live window size (minus margin) rather than
-        // CallReportView's own default — see reportSheetHeight's doc
-        // comment. Width stays fixed (matches Windows' Views/Dialogs/
-        // CallReportView.xaml Width="500" card) since only height was
-        // called out as needing to track the window.
-        .sheet(item: $pendingReport) { request in
-            CallReportView(platform: request.platform, duration: request.duration)
-                .frame(width: 500, height: reportSheetHeight)
+        // Report's height is pinned to the live window size (minus margin,
+        // see `reportSheetHeight`'s doc comment); confirm stays a small
+        // fixed-size card since it has no form content to grow into.
+        .sheet(item: $activeCallSheet) { sheet in
+            switch sheet {
+            case .report(let request):
+                CallReportView(platform: request.platform, duration: request.duration, existing: request.existing)
+                    .frame(width: 500, height: reportSheetHeight)
+                    .interactiveDismissDisabled()
+            case .confirm(let request):
+                CallConfirmView(
+                    kind: request.kind,
+                    platform: request.platform,
+                    recordingStartedAt: request.recordingStartedAt
+                )
+                .frame(width: 360)
                 .interactiveDismissDisabled()
+            }
         }
         .onReceive(reportDidChangePublisher) { _ in
-            pendingReport = CallReportRequestStore.shared.pending
-        }
-        // Phase 11.1: the "record this call?"/"stop recording?" confirm
-        // dialog — a small fixed-size card, unlike the report sheet, since
-        // it has no form content to grow into and no reason to track the
-        // window's live size.
-        .sheet(item: $pendingConfirm) { request in
-            CallConfirmView(
-                kind: request.kind,
-                platform: request.platform,
-                recordingStartedAt: request.recordingStartedAt
-            )
-            .frame(width: 360)
-            .interactiveDismissDisabled()
+            refreshActiveCallSheet()
         }
         .onReceive(confirmDidChangePublisher) { _ in
-            pendingConfirm = CallConfirmRequestStore.shared.pending
+            refreshActiveCallSheet()
         }
         .onAppear {
-            pendingReport = CallReportRequestStore.shared.pending
-            pendingConfirm = CallConfirmRequestStore.shared.pending
+            refreshActiveCallSheet()
         }
     }
 

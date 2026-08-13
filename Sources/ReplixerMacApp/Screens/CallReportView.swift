@@ -18,9 +18,11 @@ import ReplixerMacCore
 ///
 /// No cancel button and `.interactiveDismissDisabled()` at the call site
 /// (`ContentView`) — matches Windows, which has no "dismiss without
-/// reporting" affordance here either (`CallReportRequestStore.submit(nil)`
-/// exists purely for the theoretical "sheet torn down some other way" case,
-/// not a user-facing cancel).
+/// reporting" affordance here either. The only way this sheet closes
+/// without the user pressing "Відправити" is `CallReportRequestStore
+/// .interrupt()` (Phase 11.3) firing externally when a new call arrives —
+/// same as Windows' `ShowDialog` forcibly dismissing an open report, not a
+/// user-facing cancel.
 struct CallReportView: View {
     let platform: String
     let duration: TimeInterval
@@ -41,9 +43,31 @@ struct CallReportView: View {
     // call site. Their own `= AppSettings.shared....` default-value
     // expressions still apply automatically since this init never touches
     // them.
-    init(platform: String, duration: TimeInterval) {
+    //
+    // Phase 11.3: `existing` prefills every @State field from a previously
+    // interrupted draft (Windows parity: `CallReportViewModel`'s
+    // `existing:` constructor param) — nil for a normal post-call report,
+    // where every field just keeps its own `= ...` default below. Position/
+    // manager are deliberately NOT part of the prefill (still read fresh
+    // from AppSettings above) — same as Windows, which re-reads `_position`/
+    // `_managerName` on every open rather than persisting them into the
+    // resumed draft, since whoever resumes it might not be whoever started
+    // the call.
+    init(platform: String, duration: TimeInterval, existing: CallReportData? = nil) {
         self.platform = platform
         self.duration = duration
+        if let existing {
+            _selectedCallType = State(initialValue: existing.callType.isEmpty ? nil : existing.callType)
+            _customCallType = State(initialValue: existing.customCallType ?? "")
+            _selectedLeadSource = State(initialValue: existing.leadSource.isEmpty ? nil : existing.leadSource)
+            _selectedRating = State(initialValue: existing.rating.isEmpty ? nil : existing.rating)
+            _selectedOutcome = State(initialValue: existing.outcome.isEmpty ? nil : existing.outcome)
+            _customOutcome = State(initialValue: existing.customOutcome ?? "")
+            _isInvoicePaid = State(initialValue: existing.isInvoicePaid ?? false)
+            _selectedPaymentProbability = State(initialValue: existing.paymentProbability.isEmpty ? nil : existing.paymentProbability)
+            _crmUrl = State(initialValue: existing.crmUrl)
+            _note = State(initialValue: existing.note)
+        }
     }
 
     @State private var selectedCallType: String?
@@ -212,6 +236,23 @@ struct CallReportView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Звіт по дзвінку")
+        // Phase 11.3: keeps CallReportRequestStore's liveDraft continuously
+        // up to date so `interrupt()` — called from AppDelegate, outside
+        // SwiftUI, with no direct read access to this view's @State — always
+        // has something recent to hand back if a new call bumps this form
+        // before the user finishes it. Windows parity: `CaptureDraft()`
+        // reads a persistent ViewModel's fields on demand; mac has no such
+        // object here, so it pushes instead of being pulled from.
+        .onChange(of: selectedCallType) { _, _ in pushLiveDraft() }
+        .onChange(of: customCallType) { _, _ in pushLiveDraft() }
+        .onChange(of: selectedLeadSource) { _, _ in pushLiveDraft() }
+        .onChange(of: selectedRating) { _, _ in pushLiveDraft() }
+        .onChange(of: selectedOutcome) { _, _ in pushLiveDraft() }
+        .onChange(of: customOutcome) { _, _ in pushLiveDraft() }
+        .onChange(of: isInvoicePaid) { _, _ in pushLiveDraft() }
+        .onChange(of: selectedPaymentProbability) { _, _ in pushLiveDraft() }
+        .onChange(of: crmUrl) { _, _ in pushLiveDraft() }
+        .onChange(of: note) { _, _ in pushLiveDraft() }
         // No frame here on purpose — ContentView's .sheet(item:) call site
         // now owns sizing (width fixed at 500, matching Windows'
         // Views/Dialogs/CallReportView.xaml Width="500" card; height pinned
@@ -224,8 +265,12 @@ struct CallReportView: View {
         // fit scrolls in place rather than being clipped.
     }
 
-    private func submit() {
-        let data = CallReportData(
+    // Phase 11.3: pulled out of `submit()` so the same construction logic
+    // also backs the live-draft push (`pushLiveDraft()`) — visibility-gated
+    // the same way in both cases, so an interrupted draft prefills exactly
+    // what a full submit at that point would have sent.
+    private func buildReportData() -> CallReportData {
+        CallReportData(
             manager: managerName,
             position: position,
             callType: isCallTypeVisible ? (selectedCallType ?? "") : "",
@@ -239,6 +284,13 @@ struct CallReportView: View {
             paymentProbability: isPaymentProbabilityVisible ? (selectedPaymentProbability ?? "") : "",
             note: note
         )
-        CallReportRequestStore.shared.submit(data)
+    }
+
+    private func submit() {
+        CallReportRequestStore.shared.submit(buildReportData())
+    }
+
+    private func pushLiveDraft() {
+        CallReportRequestStore.shared.updateLiveDraft(buildReportData())
     }
 }

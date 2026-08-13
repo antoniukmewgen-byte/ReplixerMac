@@ -54,12 +54,35 @@ struct ProfileView: View {
     @State private var isTestingKommoConnection = false
     @State private var kommoTestResult: KommoService.CheckOutcome?
 
+    // Phase 10.1c fix — guards every onChange-triggered auto-save below
+    // against a real incident: `googleServiceAccountPath`'s doc comment
+    // (AppSettings.swift) references a prior "telegramApiHash null-wipe"
+    // where a `SecureField`'s `.onChange` fired once with an empty string
+    // during this view's initial mount (a known SwiftUI quirk — the field
+    // hasn't visually settled to its @State-seeded prefill yet), and the
+    // save function below treats "empty" as "user wants to clear this
+    // setting", silently nil-ing out a real saved value. The exact same
+    // thing then happened again to kommoSubdomain/kommoApiToken. Unlike
+    // SettingsView's managerName (which sidesteps this by simply never
+    // saving an empty value at all — empty is never a legitimate state for
+    // it), empty genuinely IS a valid, intentional state here (disconnecting
+    // Kommo/Telegram/Drive), so the fields can't just ignore empty forever.
+    // Instead: ignore only the *first* onChange this view instance ever
+    // sees, deferred one runloop tick past onAppear so it also swallows any
+    // phantom call that fires during the initial layout pass. A genuine
+    // first keystroke just has its save deferred to the next keystroke/
+    // onSubmit/field-blur, which is harmless.
+    @State private var isReadyToAutoSave = false
+
     var body: some View {
         Form {
             Section("Google Drive") {
                 TextField("ID теки Google Drive", text: $driveFolderId)
                     .onSubmit(saveDriveFolderId)
-                    .onChange(of: driveFolderId) { _, _ in saveDriveFolderId() }
+                    .onChange(of: driveFolderId) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveDriveFolderId()
+                    }
 
                 LabeledContent("Service account") {
                     HStack(spacing: 8) {
@@ -99,16 +122,28 @@ struct ProfileView: View {
             Section("Telegram") {
                 TextField("API ID", text: $telegramApiId)
                     .onSubmit(saveTelegramApiId)
-                    .onChange(of: telegramApiId) { _, _ in saveTelegramApiId() }
+                    .onChange(of: telegramApiId) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveTelegramApiId()
+                    }
                 SecureField("API Hash", text: $telegramApiHash)
                     .onSubmit(saveTelegramApiHash)
-                    .onChange(of: telegramApiHash) { _, _ in saveTelegramApiHash() }
+                    .onChange(of: telegramApiHash) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveTelegramApiHash()
+                    }
                 TextField("ID чату", text: $telegramChatId)
                     .onSubmit(saveTelegramChatId)
-                    .onChange(of: telegramChatId) { _, _ in saveTelegramChatId() }
+                    .onChange(of: telegramChatId) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveTelegramChatId()
+                    }
                 TextField("ID теми (опційно)", text: $telegramTopicId)
                     .onSubmit(saveTelegramTopicId)
-                    .onChange(of: telegramTopicId) { _, _ in saveTelegramTopicId() }
+                    .onChange(of: telegramTopicId) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveTelegramTopicId()
+                    }
 
                 if telegramHasSavedSession {
                     Label("Сесія збережена на диску", systemImage: "checkmark.circle.fill")
@@ -125,10 +160,16 @@ struct ProfileView: View {
             Section("Kommo CRM") {
                 TextField("Subdomain (напр. myaccount)", text: $kommoSubdomain)
                     .onSubmit(saveKommoSubdomain)
-                    .onChange(of: kommoSubdomain) { _, _ in saveKommoSubdomain() }
+                    .onChange(of: kommoSubdomain) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveKommoSubdomain()
+                    }
                 SecureField("API токен", text: $kommoApiToken)
                     .onSubmit(saveKommoApiToken)
-                    .onChange(of: kommoApiToken) { _, _ in saveKommoApiToken() }
+                    .onChange(of: kommoApiToken) { _, _ in
+                        guard isReadyToAutoSave else { return }
+                        saveKommoApiToken()
+                    }
 
                 Button {
                     testKommoConnection()
@@ -160,6 +201,15 @@ struct ProfileView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Профіль")
+        // See isReadyToAutoSave's doc comment above — deliberately deferred
+        // one runloop tick past onAppear (not set true directly inside it)
+        // so this also outlasts any phantom empty-value onChange firing
+        // during the same initial layout pass onAppear itself belongs to.
+        .onAppear {
+            DispatchQueue.main.async {
+                isReadyToAutoSave = true
+            }
+        }
     }
 
     private func saveDriveFolderId() {

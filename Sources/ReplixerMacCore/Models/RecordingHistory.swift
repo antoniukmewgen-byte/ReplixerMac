@@ -187,6 +187,41 @@ public final class RecordingHistory {
         }
     }
 
+    /// Phase 11.3 — Windows parity: `StopRecordingAsync`'s `wasInterrupted`
+    /// branch (`entry.ReportData = _interruptedDraft; entry.Status =
+    /// RecordingStatus.Draft;`). Called instead of `markFinished`'s upload
+    /// path when the call-report form got interrupted by a new call before
+    /// the user submitted it — no upload is attempted for a draft; the only
+    /// way back to `.saved`/`.error` is `resumeDraft`/`markDraftResolved`
+    /// below. `reportData` may itself be nil (interrupted before the user
+    /// typed anything at all) — still worth marking `.draft` rather than
+    /// silently discarding the recording the way a report-less call end
+    /// would, since Windows doesn't fall back to the no-report caption here
+    /// either.
+    func markDraft(id: UUID, reportData: CallReportData?) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].status = .draft
+            entries[index].reportData = reportData
+            return true
+        }
+    }
+
+    /// Phase 11.3: flips a `.draft` entry back to `.saved`/`.error` once
+    /// `CallRecordingCoordinator.resumeDraft`'s upload attempt finishes.
+    /// Deliberately doesn't touch `callDuration`/`filePath` the way
+    /// `markFinished` does — both were already recorded correctly when the
+    /// call originally ended; recomputing `callDuration` from `Date()` here
+    /// would wrongly stretch it to cover however long the draft sat waiting
+    /// to be resumed.
+    func markDraftResolved(id: UUID, succeeded: Bool) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            entries[index].status = succeeded ? .saved : .error
+            return true
+        }
+    }
+
     /// Phase 6: snapshot of entries whose last upload attempt left
     /// something unfinished, atomically marked `isBackgroundRetrying` in
     /// the same pass — mirrors Windows PendingUploadRetryService's
