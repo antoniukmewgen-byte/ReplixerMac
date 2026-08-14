@@ -263,6 +263,47 @@ public enum KommoService {
         return nil
     }
 
+    // MARK: - Phase 11.5 (missed-call reporting): client phone lookup
+
+    /// Windows parity source: `KommoService.GetClientPhoneAsync` — used by
+    /// `MissedCallReportViewModel.OpenMessengerAsync` to resolve the phone
+    /// number behind a messenger deep link. Reuses `getLeadDetails`'s
+    /// already-parsed `contactId`/`companyId` (see below) rather than a
+    /// dedicated lookup call — same contact-first-then-company fallback
+    /// order Windows uses. Returns `nil` (not an error) when Kommo isn't
+    /// configured, the URL doesn't parse, or no phone is found anywhere —
+    /// same opt-in-automation shape as `addNote`/`applyCallMetadata`.
+    public static func getClientPhone(leadUrl: String) async -> String? {
+        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else {
+            print("[KommoService] ⚠️ getClientPhone: Kommo не налаштовано (немає apiToken) — '\(leadUrl)'.")
+            return nil
+        }
+        guard let (subdomain, leadId) = parseLeadURL(leadUrl) else {
+            print("[KommoService] ⚠️ getClientPhone: не вдалося розпарсити URL ліда '\(leadUrl)'.")
+            return nil
+        }
+        let baseURL = "https://\(subdomain).kommo.com/api/v4"
+
+        let details = await getLeadDetails(baseURL: baseURL, token: token, leadId: leadId)
+        print("[KommoService] ℹ️ getClientPhone: лід \(leadId) → contactId=\(details.contactId ?? "nil"), companyId=\(details.companyId ?? "nil").")
+
+        var phone: String?
+        if let contactId = details.contactId {
+            phone = await getContactPhone(baseURL: baseURL, token: token, contactId: contactId)
+        }
+        if (phone?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true), let companyId = details.companyId {
+            phone = await getCompanyPhone(baseURL: baseURL, token: token, companyId: companyId)
+        }
+
+        let trimmed = phone?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed?.isEmpty ?? true {
+            print("[KommoService] ❌ getClientPhone: телефон не знайдено ні в контакті, ні в компанії ліда \(leadId).")
+        } else {
+            print("[KommoService] ✅ getClientPhone: знайдено телефон '\(trimmed!)' для ліда \(leadId).")
+        }
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
     // MARK: - Phase 10.1b: call metadata (first-contact date, processing
     // speed, call type, Nedozvon auto-advance)
 
@@ -548,7 +589,10 @@ public enum KommoService {
                 return nil
             }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let fields = json["custom_fields_values"] as? [[String: Any]] else { return nil }
+                  let fields = json["custom_fields_values"] as? [[String: Any]] else {
+                print("[KommoService] ⚠️ getEntityPhone(\(path)): відповідь без custom_fields_values (об'єкт без жодного заповненого поля?).")
+                return nil
+            }
 
             for field in fields {
                 guard let fieldId = (field["field_id"] as? NSNumber)?.int64Value, fieldId == contactPhoneFieldId else { continue }
@@ -558,8 +602,18 @@ public enum KommoService {
                         return s
                     }
                 }
+                print("[KommoService] ⚠️ getEntityPhone(\(path)): поле '\(contactPhoneFieldId)' знайдено, але всі його значення порожні.")
                 return nil
             }
+            // Шукане поле (contactPhoneFieldId, "Телефон") взагалі відсутнє
+            // серед custom_fields_values цього контакту/компанії — або в
+            // ньому справді немає жодного значення (Kommo не включає порожні
+            // поля в цей масив), або (менш ймовірно, якщо це той самий
+            // акаунт, що й Windows) захардкоджений field_id тут не збігається
+            // з реальним "Телефон"-полем цього акаунту. Друкуємо всі наявні
+            // field_id, щоб було видно, яке з них насправді є телефоном.
+            let presentFieldIds = fields.compactMap { ($0["field_id"] as? NSNumber)?.int64Value }
+            print("[KommoService] ❌ getEntityPhone(\(path)): поле '\(contactPhoneFieldId)' (очікуване 'Телефон') відсутнє серед заповнених полів. Наявні field_id: \(presentFieldIds).")
             return nil
         } catch {
             print("[KommoService] ❌ getEntityPhone(\(path)) виняток: \(error)")

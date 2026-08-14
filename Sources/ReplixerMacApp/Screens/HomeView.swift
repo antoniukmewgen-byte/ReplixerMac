@@ -99,11 +99,29 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            missedCallButton
             manualActionButton
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // Phase 11.5 — Windows parity: `HomeViewModel.MissedCallCommand`, always
+    // available regardless of whether a call is currently being recorded
+    // (a missed call is, by definition, a call that never became a
+    // recording) — unlike manualActionButton, this doesn't switch on
+    // `status.isRecording`. Precisely *because* this stays clickable during
+    // an active recording, `MissedCallReportRequestStore`'s pending request
+    // is folded into `ContentView`'s single `ActiveCallSheet` enum rather
+    // than driving its own independent `.sheet(item:)` — see that type's
+    // doc comment for why two independent sheets on one view is the exact
+    // bug class Phase 11.3 already had to fix once.
+    private var missedCallButton: some View {
+        Button("Не додзвонився") {
+            MissedCallReportRequestStore.shared.open()
+        }
+        .buttonStyle(.bordered)
     }
 
     // Phase 11.2 — Windows parity: `IdleCallViewModel.RecordManuallyCommand`/

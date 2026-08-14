@@ -132,8 +132,12 @@ enum GoogleDriveUploadService {
     }
 
     private static func mimeType(forPath path: String) -> String {
-        // Recordings are always .m4a (AAC) per FileNaming/AudioMixerEncoder
-        // — no need for a general extension→MIME lookup table yet.
-        path.hasSuffix(".m4a") ? "audio/mp4" : "application/octet-stream"
+        // Recordings are always .m4a (AAC) per FileNaming/AudioMixerEncoder;
+        // Phase 11.5 adds missed-call screenshots (.png, see
+        // `ScreenCaptureService`) as this upload path's second caller — no
+        // need for a fuller extension→MIME lookup table beyond these two.
+        if path.hasSuffix(".m4a") { return "audio/mp4" }
+        if path.hasSuffix(".png") { return "image/png" }
+        return "application/octet-stream"
     }
 }

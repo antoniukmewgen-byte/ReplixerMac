@@ -116,6 +116,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         monitor.start()
         pendingUploadRetryService.start()
+        // Phase 11.5: missed-call reports' Kommo delivery queue — same
+        // "start once at launch, stop on quit" lifecycle as
+        // pendingUploadRetryService above.
+        MissedCallDeliveryService.shared.start()
     }
 
     /// AppKit's async-shutdown hook: returning `.terminateLater` and calling
@@ -126,10 +130,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     /// to how a real (non-CLI) macOS app actually gets asked to quit.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         pendingUploadRetryService.stop()
+        MissedCallDeliveryService.shared.stop()
         Task { [coordinator] in
             await coordinator.shutdown()
             AppSettings.shared.flush()
             RecordingHistory.shared.flush()
+            MissedCallHistory.shared.flush()
+            MissedCallDeliveryService.shared.flush()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

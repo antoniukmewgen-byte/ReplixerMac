@@ -54,24 +54,34 @@ struct ProfileView: View {
     @State private var isTestingKommoConnection = false
     @State private var kommoTestResult: KommoService.CheckOutcome?
 
-    // Phase 10.1c fix — guards every onChange-triggered auto-save below
-    // against a real incident: `googleServiceAccountPath`'s doc comment
+    // Phase 10.1c fix, extended after the "isReadyToAutoSave" attempt below
+    // turned out not to be enough: `googleServiceAccountPath`'s doc comment
     // (AppSettings.swift) references a prior "telegramApiHash null-wipe"
-    // where a `SecureField`'s `.onChange` fired once with an empty string
-    // during this view's initial mount (a known SwiftUI quirk — the field
-    // hasn't visually settled to its @State-seeded prefill yet), and the
-    // save function below treats "empty" as "user wants to clear this
-    // setting", silently nil-ing out a real saved value. The exact same
-    // thing then happened again to kommoSubdomain/kommoApiToken. Unlike
-    // SettingsView's managerName (which sidesteps this by simply never
-    // saving an empty value at all — empty is never a legitimate state for
-    // it), empty genuinely IS a valid, intentional state here (disconnecting
-    // Kommo/Telegram/Drive), so the fields can't just ignore empty forever.
-    // Instead: ignore only the *first* onChange this view instance ever
-    // sees, deferred one runloop tick past onAppear so it also swallows any
-    // phantom call that fires during the initial layout pass. A genuine
-    // first keystroke just has its save deferred to the next keystroke/
-    // onSubmit/field-blur, which is harmless.
+    // where a `SecureField`'s `.onChange` fired with an empty string it
+    // never actually displayed, and the save function treated "empty" as
+    // "user wants to clear this setting", silently nil-ing out a real saved
+    // value. The `isReadyToAutoSave` guard below (ignore only the *first*
+    // onChange this view instance ever sees) fixed the initial-mount case,
+    // but the exact same wipe kept recurring for kommoApiToken specifically
+    // — because on macOS a `SecureField` can re-fire `onChange` with `""`
+    // any time its underlying secure text-entry field gets torn down and
+    // rebuilt (window losing/regaining key status — switching away and
+    // back, sleep/wake, or simply relaunching after a reboot), not just at
+    // first mount. `isReadyToAutoSave` only ever protects the *very first*
+    // occurrence, so any later phantom reset sails straight through and
+    // gets auto-saved as "user cleared the field", permanently losing the
+    // real token days after it was actually typed.
+    //
+    // Fix: `onChange` on a `SecureField` never saves an empty value anymore
+    // (see `saveKommoApiToken`/`saveTelegramApiHash` below) — a phantom
+    // reset is now just ignored, no write happens. Clearing the setting on
+    // purpose still works via `onSubmit` (pressing Return on an emptied
+    // field is an explicit user gesture, not something AppKit fires on its
+    // own) or the "Очистити" button next to each field, which is the more
+    // discoverable affordance for a password-style control anyway. Plain
+    // `TextField`s (kommoSubdomain, the Telegram numeric fields, Drive
+    // folder id) aren't known to have this AppKit-level teardown/rebuild
+    // quirk, so they keep the simpler "empty onChange clears it" behavior.
     @State private var isReadyToAutoSave = false
 
     var body: some View {
@@ -126,12 +136,21 @@ struct ProfileView: View {
                         guard isReadyToAutoSave else { return }
                         saveTelegramApiId()
                     }
-                SecureField("API Hash", text: $telegramApiHash)
-                    .onSubmit(saveTelegramApiHash)
-                    .onChange(of: telegramApiHash) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveTelegramApiHash()
-                    }
+                HStack(spacing: 8) {
+                    SecureField("API Hash", text: $telegramApiHash)
+                        .onSubmit(saveTelegramApiHash)
+                        .onChange(of: telegramApiHash) { _, newValue in
+                            guard isReadyToAutoSave else { return }
+                            // See isReadyToAutoSave's doc comment above — a
+                            // SecureField's onChange never treats an empty
+                            // value as an intentional clear; only onSubmit
+                            // (explicit Return) or the button below do that.
+                            guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                            saveTelegramApiHash()
+                        }
+                    Button("Очистити", role: .destructive, action: clearTelegramApiHash)
+                        .disabled(telegramApiHash.isEmpty)
+                }
                 TextField("ID чату", text: $telegramChatId)
                     .onSubmit(saveTelegramChatId)
                     .onChange(of: telegramChatId) { _, _ in
@@ -164,12 +183,20 @@ struct ProfileView: View {
                         guard isReadyToAutoSave else { return }
                         saveKommoSubdomain()
                     }
-                SecureField("API токен", text: $kommoApiToken)
-                    .onSubmit(saveKommoApiToken)
-                    .onChange(of: kommoApiToken) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveKommoApiToken()
-                    }
+                HStack(spacing: 8) {
+                    SecureField("API токен", text: $kommoApiToken)
+                        .onSubmit(saveKommoApiToken)
+                        .onChange(of: kommoApiToken) { _, newValue in
+                            guard isReadyToAutoSave else { return }
+                            // Same reasoning as telegramApiHash's onChange
+                            // above — never let a phantom empty fire wipe a
+                            // real saved token.
+                            guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                            saveKommoApiToken()
+                        }
+                    Button("Очистити", role: .destructive, action: clearKommoApiToken)
+                        .disabled(kommoApiToken.isEmpty)
+                }
 
                 Button {
                     testKommoConnection()
@@ -257,6 +284,15 @@ struct ProfileView: View {
         AppSettings.shared.telegramApiHash = trimmed.isEmpty ? nil : trimmed
     }
 
+    // Explicit-clear path for the "Очистити" button next to the SecureField
+    // — the one place besides onSubmit that's allowed to persist an empty
+    // value, since a button tap (unlike onChange) can never be a phantom
+    // AppKit-internal refire.
+    private func clearTelegramApiHash() {
+        telegramApiHash = ""
+        AppSettings.shared.telegramApiHash = nil
+    }
+
     private func saveTelegramChatId() {
         let trimmed = telegramChatId.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -285,6 +321,12 @@ struct ProfileView: View {
     private func saveKommoApiToken() {
         let trimmed = kommoApiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         AppSettings.shared.kommoApiToken = trimmed.isEmpty ? nil : trimmed
+    }
+
+    // See clearTelegramApiHash's doc comment above — same reasoning.
+    private func clearKommoApiToken() {
+        kommoApiToken = ""
+        AppSettings.shared.kommoApiToken = nil
     }
 
     private func testKommoConnection() {

@@ -37,23 +37,43 @@ struct ContentView: View {
     // different identity is the officially-supported "swap sheet content"
     // path — SwiftUI itself sequences the dismiss-then-present handoff,
     // rather than two independent sheet lifecycles racing each other.
+    // Phase 11.5: folded `MissedCallReportRequestStore`'s pending request in
+    // as a third case rather than keeping it as its own independent
+    // `.sheet(item:)` — an earlier version did that, reasoning that a
+    // missed-call report has no continuation to orphan the way
+    // report/confirm do, so a lost presentation would just be a harmless
+    // ordering glitch. That reasoning covered the *hang* risk but not the
+    // presentation itself: two independent `.sheet(item:)` modifiers on one
+    // view is exactly the setup that caused the original Phase 11.3 bug
+    // (SwiftUI silently drops the second one when both items go non-nil
+    // close together), and `missedCallButton` (`HomeView`) is deliberately
+    // clickable even while a call is actively recording — so "manager opens
+    // 'Не додзвонився' right as the just-ended call's report/confirm sheet
+    // is about to appear" is a real, reachable interleaving here, not a
+    // theoretical one. Same fix as 11.3: one `@State`, one `.sheet(item:)`.
     private enum ActiveCallSheet: Identifiable {
         case report(CallReportRequestStore.PendingRequest)
         case confirm(CallConfirmRequestStore.PendingRequest)
+        case missedCall(MissedCallReportRequestStore.PendingRequest)
 
         var id: UUID {
             switch self {
             case .report(let request): return request.id
             case .confirm(let request): return request.id
+            case .missedCall(let request): return request.id
             }
         }
     }
 
-    // Report takes priority if (in principle) both stores somehow had a
-    // pending request at the same instant — matches the real-world
-    // sequencing (`interrupt()` always clears the report *before* a new
-    // confirm request is even created), so this is a defensive tie-break,
-    // not something expected to actually matter in practice.
+    // Report, then confirm, then missed-call takes priority if (in
+    // principle) more than one store somehow had a pending request at the
+    // same instant — matches the real-world sequencing (`interrupt()`
+    // always clears the report *before* a new confirm request is even
+    // created) for report/confirm, and is an arbitrary-but-consistent
+    // tie-break for missed-call, which has no such ordering guarantee
+    // against the other two. Not expected to actually matter in practice;
+    // whichever loses just stays queued and presents once the winner's
+    // sheet dismisses and `refreshActiveCallSheet()` runs again.
     @State private var activeCallSheet: ActiveCallSheet?
 
     private func refreshActiveCallSheet() {
@@ -61,6 +81,8 @@ struct ContentView: View {
             activeCallSheet = .report(report)
         } else if let confirm = CallConfirmRequestStore.shared.pending {
             activeCallSheet = .confirm(confirm)
+        } else if let missedCall = MissedCallReportRequestStore.shared.pending {
+            activeCallSheet = .missedCall(missedCall)
         } else {
             activeCallSheet = nil
         }
@@ -94,6 +116,10 @@ struct ContentView: View {
 
     private let confirmDidChangePublisher = NotificationCenter.default
         .publisher(for: CallConfirmRequestStore.didChangeNotification)
+        .receive(on: DispatchQueue.main)
+
+    private let missedCallDidChangePublisher = NotificationCenter.default
+        .publisher(for: MissedCallReportRequestStore.didChangeNotification)
         .receive(on: DispatchQueue.main)
 
     var body: some View {
@@ -159,12 +185,19 @@ struct ContentView: View {
                 )
                 .frame(width: 360)
                 .interactiveDismissDisabled()
+            case .missedCall(let request):
+                MissedCallReportView(missedAt: request.missedAt)
+                    .frame(width: 500, height: reportSheetHeight)
+                    .interactiveDismissDisabled()
             }
         }
         .onReceive(reportDidChangePublisher) { _ in
             refreshActiveCallSheet()
         }
         .onReceive(confirmDidChangePublisher) { _ in
+            refreshActiveCallSheet()
+        }
+        .onReceive(missedCallDidChangePublisher) { _ in
             refreshActiveCallSheet()
         }
         .onAppear {

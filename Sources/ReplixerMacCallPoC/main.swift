@@ -191,6 +191,16 @@ monitor.start()
 let pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
 pendingUploadRetryService.start()
 
+// Phase 11.5: missed-call reports' Kommo delivery queue — same "duplicated
+// startup wiring" pattern as pendingUploadRetryService above (this PoC
+// keeps its own copy of every background service ReplixerMacApp runs, see
+// AppDelegate's doc comment on why). Nothing in this headless target
+// actually creates missed-call reports (no UI here), but the queue still
+// needs to run in case pending_missed_calls.json has leftover entries from
+// a previous ReplixerMacApp run against the same Application Support
+// directory.
+MissedCallDeliveryService.shared.start()
+
 // Phase 1.6: catch Ctrl+C (SIGINT) and `kill` (SIGTERM, the default signal)
 // so an active recording gets a clean stop() — which renames its
 // .inprogress file to the real name — instead of being killed mid-write.
@@ -202,6 +212,7 @@ signal(SIGTERM, SIG_IGN)
 func handleShutdownSignal(_ signalName: String) {
     print("[\(timestamp())] Отримано \(signalName) — коректно завершую (зупиняю активний запис, якщо є)...")
     pendingUploadRetryService.stop()
+    MissedCallDeliveryService.shared.stop()
     Task {
         await coordinator.shutdown()
         // Phase 2.1/2.2: flush any debounced-but-not-yet-written settings
@@ -210,6 +221,8 @@ func handleShutdownSignal(_ signalName: String) {
         // lost to shutdown.
         AppSettings.shared.flush()
         RecordingHistory.shared.flush()
+        MissedCallHistory.shared.flush()
+        MissedCallDeliveryService.shared.flush()
         exit(0)
     }
 }
