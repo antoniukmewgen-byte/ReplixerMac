@@ -57,7 +57,13 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Профіль") {
+            // Design-only: every Section below now takes a `Label` title
+            // instead of a bare string — small colorful glyph next to each
+            // section heading, same "each area gets its own icon" idiom the
+            // sidebar (`ContentView.sidebarRow`) already uses, so Settings
+            // reads consistently with the rest of the redesigned app. No
+            // field, onChange handler, or persistence call below changed.
+            Section {
                 TextField("Ім'я менеджера", text: $managerName)
                     .onSubmit(saveManagerName)
                     // Covers focus-loss edits too (e.g. clicking away
@@ -73,20 +79,24 @@ struct SettingsView: View {
                 .onChange(of: position) { _, newValue in
                     AppSettings.shared.position = newValue
                 }
+            } header: {
+                Label("Профіль", systemImage: "person.crop.circle.fill")
             }
 
-            Section("Запуск") {
+            Section {
                 Toggle("Запускати ReplixerMac при вході в систему", isOn: $isAutoStartEnabled)
                     .onChange(of: isAutoStartEnabled) { _, newValue in setAutoStart(newValue) }
 
                 if let autoStartError {
                     Label(autoStartError, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.Status.warning)
                         .font(.caption)
                 }
+            } header: {
+                Label("Запуск", systemImage: "power")
             }
 
-            Section("Робочий час") {
+            Section {
                 DatePicker("Початок", selection: $workDayStart, displayedComponents: .hourAndMinute)
                     .onChange(of: workDayStart) { _, newValue in
                         AppSettings.shared.workDayStartMinutes = Self.minutesSinceMidnight(from: newValue)
@@ -98,9 +108,11 @@ struct SettingsView: View {
                 Text("Використовується Kommo-полем \"Швидкість обробки в робочий час\" — межі робочого дня клієнта в його місцевому часовому поясі (для українських номерів вікно зсувається на +7 год).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } header: {
+                Label("Робочий час", systemImage: "clock.fill")
             }
 
-            Section("Дані застосунку") {
+            Section {
                 LabeledContent("Файл налаштувань") {
                     Text(AppSettings.store.url.path)
                         .foregroundStyle(.secondary)
@@ -109,6 +121,8 @@ struct SettingsView: View {
                 Button("Показати у Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([AppSettings.store.url])
                 }
+            } header: {
+                Label("Дані застосунку", systemImage: "externaldrive.fill")
             }
         }
         .formStyle(.grouped)

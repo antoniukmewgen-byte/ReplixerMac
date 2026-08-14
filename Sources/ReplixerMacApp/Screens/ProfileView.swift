@@ -86,7 +86,11 @@ struct ProfileView: View {
 
     var body: some View {
         Form {
-            Section("Google Drive") {
+            // Design-only: `Label` section headers (matching SettingsView's
+            // same treatment) and `Theme.Status.*` in place of the old bare
+            // `.green`/`.orange` — no field, onChange, or save/clear logic
+            // below changed.
+            Section {
                 TextField("ID теки Google Drive", text: $driveFolderId)
                     .onSubmit(saveDriveFolderId)
                     .onChange(of: driveFolderId) { _, _ in
@@ -121,15 +125,17 @@ struct ProfileView: View {
                     switch driveTestResult {
                     case .success(let message):
                         Label(message, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Theme.Status.saved)
                     case .failure(let message):
                         Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Theme.Status.warning)
                     }
                 }
+            } header: {
+                Label("Google Drive", systemImage: "externaldrive.fill")
             }
 
-            Section("Telegram") {
+            Section {
                 TextField("API ID", text: $telegramApiId)
                     .onSubmit(saveTelegramApiId)
                     .onChange(of: telegramApiId) { _, _ in
@@ -166,7 +172,7 @@ struct ProfileView: View {
 
                 if telegramHasSavedSession {
                     Label("Сесія збережена на диску", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Theme.Status.saved)
                 } else {
                     Label("Сесії ще немає", systemImage: "circle")
                         .foregroundStyle(.secondary)
@@ -174,9 +180,11 @@ struct ProfileView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Label("Telegram", systemImage: "paperplane.fill")
             }
 
-            Section("Kommo CRM") {
+            Section {
                 TextField("Subdomain (напр. myaccount)", text: $kommoSubdomain)
                     .onSubmit(saveKommoSubdomain)
                     .onChange(of: kommoSubdomain) { _, _ in
@@ -213,17 +221,21 @@ struct ProfileView: View {
                     switch kommoTestResult {
                     case .success(let message):
                         Label(message, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Theme.Status.saved)
                     case .failure(let message):
                         Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Theme.Status.warning)
                     }
                 }
+            } header: {
+                Label("Kommo CRM", systemImage: "person.crop.circle.badge.checkmark")
             }
 
-            Section("Google Sheets") {
+            Section {
                 Text("Заплановано на Phase 10.")
                     .foregroundStyle(.secondary)
+            } header: {
+                Label("Google Sheets", systemImage: "tablecells.fill")
             }
         }
         .formStyle(.grouped)

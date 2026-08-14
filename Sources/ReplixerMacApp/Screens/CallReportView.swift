@@ -125,15 +125,22 @@ struct CallReportView: View {
     }
 
     var body: some View {
+        // Design-only pass below: every Section header is now a `Label`
+        // with an icon (same idiom as Settings/Profile), and the "orange"
+        // warning colors moved to `Theme.Status.warning` — no Picker
+        // option, visibility rule, onChange wiring, or canSubmit/
+        // buildReportData logic changed anywhere in this file.
         Form {
             Section {
                 LabeledContent("Менеджер", value: managerName.isEmpty ? "—" : managerName)
                 LabeledContent("Роль", value: position)
                 LabeledContent("Дзвінок", value: platform)
+            } header: {
+                Label("Про дзвінок", systemImage: "phone.fill")
             }
 
             if isCallTypeVisible {
-                Section("Тип дзвінка") {
+                Section {
                     Picker("Тип дзвінка", selection: $selectedCallType) {
                         Text("Не обрано").tag(String?.none)
                         ForEach(CallReportData.callTypes, id: \.self) { type in
@@ -145,11 +152,13 @@ struct CallReportView: View {
                     if isCustomCallTypeVisible {
                         TextField("Уточніть тип дзвінка", text: $customCallType)
                     }
+                } header: {
+                    Label("Тип дзвінка", systemImage: "list.bullet")
                 }
             }
 
             if isLeadSourceVisible {
-                Section("Джерело ліда") {
+                Section {
                     Picker("Джерело ліда", selection: $selectedLeadSource) {
                         Text("Не обрано").tag(String?.none)
                         ForEach(CallReportData.leadSources, id: \.self) { source in
@@ -157,11 +166,13 @@ struct CallReportView: View {
                         }
                     }
                     .labelsHidden()
+                } header: {
+                    Label("Джерело ліда", systemImage: "arrow.triangle.branch")
                 }
             }
 
             if isRatingVisible {
-                Section("Оцінка розмови") {
+                Section {
                     Picker("Оцінка розмови", selection: $selectedRating) {
                         Text("Не обрано").tag(String?.none)
                         ForEach(CallReportData.ratings, id: \.self) { rating in
@@ -169,11 +180,13 @@ struct CallReportView: View {
                         }
                     }
                     .labelsHidden()
+                } header: {
+                    Label("Оцінка розмови", systemImage: "star.fill")
                 }
             }
 
             if isOutcomeVisible {
-                Section("До чого дійшли") {
+                Section {
                     Picker("До чого дійшли", selection: $selectedOutcome) {
                         Text("Не обрано").tag(String?.none)
                         ForEach(CallReportData.outcomes, id: \.self) { outcome in
@@ -189,11 +202,13 @@ struct CallReportView: View {
                     if isInvoiceCheckboxVisible {
                         Toggle("Рахунок оплачено", isOn: $isInvoicePaid)
                     }
+                } header: {
+                    Label("До чого дійшли", systemImage: "flag.checkered")
                 }
             }
 
             if isPaymentProbabilityVisible {
-                Section("Вірогідність оплати") {
+                Section {
                     Picker("Вірогідність оплати", selection: $selectedPaymentProbability) {
                         Text("Не обрано").tag(String?.none)
                         ForEach(CallReportData.ratings, id: \.self) { value in
@@ -201,19 +216,23 @@ struct CallReportView: View {
                         }
                     }
                     .labelsHidden()
+                } header: {
+                    Label("Вірогідність оплати", systemImage: "percent")
                 }
             }
 
-            Section("CRM") {
+            Section {
                 TextField("Посилання на лід у Kommo", text: $crmUrl)
                 if isCrmUrlInvalid {
                     Label("Очікується посилання виду https://<акаунт>.kommo.com/leads/detail/<id>", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.Status.warning)
                         .font(.caption)
                 }
+            } header: {
+                Label("CRM", systemImage: "link")
             }
 
-            Section("Примітка") {
+            Section {
                 TextEditor(text: $note)
                     .frame(minHeight: 80)
                     .onChange(of: note) { _, newValue in
@@ -223,7 +242,9 @@ struct CallReportView: View {
                     }
                 Text("\(note.count)/\(Self.noteMaxLength)")
                     .font(.caption)
-                    .foregroundStyle(note.count >= Self.noteMaxLength - 50 ? .orange : .secondary)
+                    .foregroundStyle(note.count >= Self.noteMaxLength - 50 ? Theme.Status.warning : .secondary)
+            } header: {
+                Label("Примітка", systemImage: "note.text")
             }
 
             Section {
@@ -232,6 +253,8 @@ struct CallReportView: View {
                 }
                 .disabled(!canSubmit)
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
         }
         .formStyle(.grouped)

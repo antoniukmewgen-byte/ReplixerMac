@@ -52,7 +52,7 @@ struct CallConfirmView: View {
     }
 
     private var accentColor: Color {
-        kind == .start ? .green : .red
+        kind == .start ? Theme.Status.saved : Theme.Status.recording
     }
 
     private var elapsedText: String? {
@@ -63,9 +63,11 @@ struct CallConfirmView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: kind == .start ? "phone.arrow.down.left.fill" : "phone.down.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(accentColor)
+            IconBadge(
+                systemImage: kind == .start ? "phone.arrow.down.left.fill" : "phone.down.fill",
+                tint: accentColor,
+                size: 56
+            )
 
             VStack(spacing: 4) {
                 Text(platform)

@@ -85,12 +85,17 @@ struct MissedCallReportView: View {
     }
 
     var body: some View {
+        // Design-only pass below: `Label` section headers + Theme colors,
+        // same as CallReportView's identical treatment — no field, gating
+        // rule, or quick-action/submit logic changed.
         Form {
             Section {
                 LabeledContent("Менеджер", value: managerName.isEmpty ? "—" : managerName)
+            } header: {
+                Label("Профіль", systemImage: "person.crop.circle.fill")
             }
 
-            Section("Тип дзвінка") {
+            Section {
                 Picker("Тип дзвінка", selection: $selectedCallType) {
                     Text("Не обрано").tag(String?.none)
                     ForEach(MissedCallReportData.callTypes, id: \.self) { type in
@@ -98,13 +103,15 @@ struct MissedCallReportView: View {
                     }
                 }
                 .labelsHidden()
+            } header: {
+                Label("Тип дзвінка", systemImage: "list.bullet")
             }
 
             // Windows parity: `IsFirstContactTimeEditable` — only shown
             // (and thus only enforced via isFirstContactTimeInvalid) for
             // "ще не було спілкування" types.
             if isNoCommunicationType {
-                Section("Час першого контакту") {
+                Section {
                     HStack(spacing: 8) {
                         TextField("дд.мм.рррр гг:хх", text: $firstContactTimeText)
                         Button {
@@ -122,22 +129,26 @@ struct MissedCallReportView: View {
                     }
                     if isFirstContactTimeInvalid {
                         Label("Очікується формат дд.мм.рррр гг:хх", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Theme.Status.warning)
                             .font(.caption)
                     }
+                } header: {
+                    Label("Час першого контакту", systemImage: "clock.fill")
                 }
             }
 
-            Section("CRM") {
+            Section {
                 TextField("Посилання на лід у Kommo", text: $crmUrl)
                 if isCrmUrlInvalid {
                     Label("Очікується посилання виду https://<акаунт>.kommo.com/leads/detail/<id>", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.Status.warning)
                         .font(.caption)
                 }
+            } header: {
+                Label("CRM", systemImage: "link")
             }
 
-            Section("Швидкі дії") {
+            Section {
                 ForEach(MessengerDeepLinkProvider.supportedMessengers, id: \.self) { messenger in
                     messengerRow(messenger)
                 }
@@ -149,6 +160,8 @@ struct MissedCallReportView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Label("Швидкі дії", systemImage: "bolt.fill")
             }
 
             Section {
@@ -157,6 +170,8 @@ struct MissedCallReportView: View {
                 }
                 .disabled(!canSubmit)
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
         }
         .formStyle(.grouped)
@@ -183,7 +198,7 @@ struct MissedCallReportView: View {
             } else if let status = messengerStatus[messenger] {
                 Text(status)
                     .font(.caption)
-                    .foregroundStyle(messengerFailed[messenger] == true ? .red : .secondary)
+                    .foregroundStyle(messengerFailed[messenger] == true ? Theme.Status.warning : Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else {

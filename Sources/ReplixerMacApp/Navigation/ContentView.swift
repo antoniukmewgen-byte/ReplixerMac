@@ -10,6 +10,16 @@ struct ContentView: View {
     // Starts on .home, matching Windows always starting on HomeViewModel.
     @State private var selection: AppScreen? = .home
 
+    // Design-only addition (no behavior change): mirrors
+    // RecordingStatusStore.shared.status.isRecording so the sidebar's Home
+    // row can show a small live pulsing dot next to its icon — same "local
+    // @State mirror refreshed via NotificationCenter" pattern HomeView
+    // already uses for the same store.
+    @State private var isRecording = RecordingStatusStore.shared.status.isRecording
+    private let sidebarStatusPublisher = NotificationCenter.default
+        .publisher(for: RecordingStatusStore.didChangeNotification)
+        .receive(on: DispatchQueue.main)
+
     // Phase 7.7: seeded once from AppSettings at view creation, not
     // recomputed per-render — the sheet's own `onFinish` callback is what
     // flips this back to false, so there's no need for this to track
@@ -125,15 +135,21 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(AppScreen.allCases, selection: $selection) { screen in
-                Label(screen.title, systemImage: screen.systemImage)
+                sidebarRow(for: screen)
                     .tag(screen)
+                    .padding(.vertical, 2)
             }
+            .listStyle(.sidebar)
             .navigationTitle("ReplixerMac")
+            .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 260)
         } detail: {
             // Falls back to .home rather than a blank pane if selection
             // somehow goes nil (e.g. Cmd-click deselecting the sidebar row)
             // — AppScreen itself intentionally has no "none" case.
             screen(for: selection ?? .home)
+        }
+        .onReceive(sidebarStatusPublisher) { _ in
+            isRecording = RecordingStatusStore.shared.status.isRecording
         }
         // Invisible size probe, not a visible background — reads this
         // view's own laid-out size (== the window's content size) on every
@@ -218,6 +234,31 @@ struct ContentView: View {
             SettingsView()
         case .profile:
             ProfileView()
+        }
+    }
+
+    // Design-only: replaces the old bare `Label(screen.title,
+    // systemImage:)` sidebar row with a small colorful icon badge (per-
+    // screen tint, see `AppScreen.tintColor`) — same "each section gets its
+    // own color" idiom Mail/Reminders use in their own sidebars — plus a
+    // live pulsing dot on the Home row while a call is being recorded, so
+    // "something is happening" is visible even when a different screen is
+    // selected.
+    @ViewBuilder
+    private func sidebarRow(for screen: AppScreen) -> some View {
+        Label {
+            Text(screen.title)
+        } icon: {
+            ZStack(alignment: .topTrailing) {
+                IconBadge(systemImage: screen.systemImage, tint: screen.tintColor, size: 22, shape: .roundedSquare)
+                if screen == .home && isRecording {
+                    Circle()
+                        .fill(Theme.Status.recording)
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                        .offset(x: 3, y: -3)
+                }
+            }
         }
     }
 }

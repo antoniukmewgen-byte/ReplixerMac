@@ -46,7 +46,13 @@ struct SetupWizardView: View {
     }
 
     var body: some View {
+        // Design-only visual pass — `finish()`/`onFinish`/`managerName`
+        // wiring below is byte-for-byte the same as before; only the
+        // surrounding chrome (icon badge, spacing, slightly larger frame to
+        // fit it) changed.
         VStack(alignment: .leading, spacing: 20) {
+            IconBadge(systemImage: "waveform.circle.fill", tint: .accentColor, size: 56)
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Ласкаво просимо до ReplixerMac")
                     .font(.title2)
@@ -66,11 +72,13 @@ struct SetupWizardView: View {
                 Spacer()
                 Button("Почати роботу", action: finish)
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(trimmedName.isEmpty)
             }
         }
-        .padding(24)
-        .frame(width: 420, height: 240)
+        .padding(28)
+        .frame(width: 440, height: 280)
     }
 
     private func finish() {

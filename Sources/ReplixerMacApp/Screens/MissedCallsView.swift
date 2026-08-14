@@ -30,9 +30,17 @@ struct MissedCallsView: View {
                     description: Text("Тут з'являться звіти після першого «Не додзвонився».")
                 )
             } else {
+                // Same plain-list + hidden-chrome treatment as
+                // RecordingsView, so each MissedCallRow's `.cardSurface()`
+                // reads as its own floating card.
                 List(entries) { entry in
                     MissedCallRow(entry: entry)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 5, leading: Theme.Spacing.screen, bottom: 5, trailing: Theme.Spacing.screen))
+                        .listRowBackground(Color.clear)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("Пропущені дзвінки")
@@ -46,10 +54,12 @@ private struct MissedCallRow: View {
     let entry: MissedCallEntry
 
     var body: some View {
-        HStack(spacing: 12) {
-            statusIcon
-                .font(.title2)
-                .frame(width: 24)
+        HStack(spacing: 14) {
+            IconBadge(
+                systemImage: entry.kommoDelivered ? "checkmark.circle.fill" : "clock.fill",
+                tint: entry.kommoDelivered ? Theme.Status.saved : Theme.Status.warning,
+                size: 38
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.callType)
@@ -73,14 +83,15 @@ private struct MissedCallRow: View {
                     .help("Кількість прикріплених скріншотів")
             }
 
-            Text(entry.statusText)
-                .font(.subheadline)
-                // Explicit `Color` (not the bare `.secondary`/`.orange`
-                // static members) — a ternary of two `ShapeStyle` static
-                // members doesn't type-check as a single `ShapeStyle`
-                // ("Type 'any ShapeStyle' cannot conform to 'ShapeStyle'"),
-                // it needs a concrete common type to resolve to.
-                .foregroundStyle(entry.kommoDelivered ? Color.secondary : Color.orange)
+            // StatusBadge, not the old bare-Text ternary-foregroundStyle
+            // workaround — same `entry.kommoDelivered ? … : …` condition,
+            // just resolved to a `Color` up front (avoiding the "ternary of
+            // two ShapeStyle statics doesn't type-check" issue the old
+            // comment here explained) and rendered as a tinted pill.
+            StatusBadge(
+                text: entry.statusText,
+                tint: entry.kommoDelivered ? Theme.Status.idle : Theme.Status.warning
+            )
 
             if let crmUrl = URL(string: entry.crmUrl) {
                 Link(destination: crmUrl) {
@@ -89,17 +100,6 @@ private struct MissedCallRow: View {
                 .help("Відкрити лід у Kommo")
             }
         }
-        .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        if entry.kommoDelivered {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        } else {
-            Image(systemName: "clock.fill")
-                .foregroundStyle(.orange)
-        }
+        .cardSurface(padding: 14)
     }
 }

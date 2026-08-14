@@ -48,11 +48,12 @@ struct HomeView: View {
     private let elapsedTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.item) {
             statusCard
             recentActivityCard
         }
-        .padding(16)
+        .padding(Theme.Spacing.screen)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Головна")
         .onReceive(statusPublisher) { _ in status = RecordingStatusStore.shared.status }
         .onReceive(historyPublisher) { _ in recentEntries = Array(RecordingHistory.shared.entries.prefix(4)) }
@@ -77,34 +78,44 @@ struct HomeView: View {
     }
 
     private var statusCard: some View {
-        HStack(spacing: 12) {
-            if status.isRecording {
-                Image(systemName: "record.circle.fill")
-                    .foregroundStyle(.red)
-                    .font(.title2)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(status.platform ?? "Дзвінок")
-                        .font(.headline)
+        HStack(spacing: 16) {
+            ZStack(alignment: .bottomTrailing) {
+                IconBadge(
+                    systemImage: status.isRecording ? "record.circle.fill" : "waveform",
+                    tint: status.isRecording ? Theme.Status.recording : .secondary,
+                    size: 52
+                )
+                if status.isRecording {
+                    PulsingDot(size: 9)
+                        .offset(x: 3, y: 3)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(status.isRecording ? (status.platform ?? "Дзвінок") : "Очікую дзвінок...")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(status.isRecording ? .primary : .secondary)
+
+                if status.isRecording {
                     Text("Триває запис — \(elapsedTimeText)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                } else {
+                    Text("Запис розпочнеться автоматично, щойно з'явиться дзвінок")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-            } else {
-                Image(systemName: "waveform")
-                    .foregroundStyle(.secondary)
-                    .font(.title2)
-                Text("Очікую дзвінок...")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
             }
+
             Spacer()
-            missedCallButton
-            manualActionButton
+
+            HStack(spacing: 8) {
+                missedCallButton
+                manualActionButton
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+        .cardSurface()
     }
 
     // Phase 11.5 — Windows parity: `HomeViewModel.MissedCallCommand`, always
@@ -118,8 +129,10 @@ struct HomeView: View {
     // doc comment for why two independent sheets on one view is the exact
     // bug class Phase 11.3 already had to fix once.
     private var missedCallButton: some View {
-        Button("Не додзвонився") {
+        Button {
             MissedCallReportRequestStore.shared.open()
+        } label: {
+            Label("Не додзвонився", systemImage: "phone.down")
         }
         .buttonStyle(.bordered)
     }
@@ -132,14 +145,19 @@ struct HomeView: View {
     @ViewBuilder
     private var manualActionButton: some View {
         if status.isRecording {
-            Button("Зупинити запис") {
+            Button {
                 guard let coordinator = CallRecordingCoordinator.appInstance else { return }
                 Task { await coordinator.manualStop() }
+            } label: {
+                Label("Зупинити запис", systemImage: "stop.fill")
             }
             .buttonStyle(.bordered)
+            .tint(.red)
         } else {
-            Button("Почати запис вручну") {
+            Button {
                 startManually()
+            } label: {
+                Label("Почати запис вручну", systemImage: "record.circle")
             }
             .buttonStyle(.borderedProminent)
         }
@@ -166,11 +184,9 @@ struct HomeView: View {
     }
 
     private var recentActivityCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("ОСТАННІ ЗАПИСИ")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundStyle(.secondary)
+                .sectionCaptionStyle()
 
             if recentEntries.isEmpty {
                 ContentUnavailableView(
@@ -180,19 +196,14 @@ struct HomeView: View {
                 )
                 .frame(maxWidth: .infinity)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: 2) {
                     ForEach(recentEntries) { entry in
                         RecentActivityRow(entry: entry)
-                        if entry.id != recentEntries.last?.id {
-                            Divider()
-                        }
                     }
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+        .cardSurface()
     }
 
     private static let elapsedFormatter: DateComponentsFormatter = {
@@ -272,7 +283,7 @@ private struct RecentActivityRow: View {
                 .help("Редагувати звіт")
             }
         }
-        .padding(.vertical, 6)
+        .cardRow()
         .alert("Не вдалося відновити чернетку", isPresented: Binding(
             get: { resumeAlertMessage != nil },
             set: { if !$0 { resumeAlertMessage = nil } }
@@ -339,19 +350,19 @@ private struct RecentActivityRow: View {
         switch entry.status {
         case .recording:
             Image(systemName: "record.circle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(Theme.Status.recording)
         case .saved:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.Status.saved)
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.Status.warning)
         case .draft:
             // Phase 11.3 — same icon/color choice as RecordingsView's
             // statusIcon, so the 4-row "ОСТАННІ ЗАПИСИ" preview on this
             // screen and the full history list read consistently.
             Image(systemName: "doc.badge.clock")
-                .foregroundStyle(.yellow)
+                .foregroundStyle(Theme.Status.draft)
         }
     }
 }

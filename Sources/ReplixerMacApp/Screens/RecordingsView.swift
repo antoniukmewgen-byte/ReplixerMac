@@ -41,9 +41,18 @@ struct RecordingsView: View {
                     description: Text("Тут з'являться записи після першого дзвінка.")
                 )
             } else {
+                // Plain list style + hidden separators/backgrounds so each
+                // RecordingRow's own `.cardSurface()` reads as a distinct
+                // floating card (matching Home's card-based layout) instead
+                // of a traditional inset-grouped table row.
                 List(entries) { entry in
                     RecordingRow(entry: entry)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 5, leading: Theme.Spacing.screen, bottom: 5, trailing: Theme.Spacing.screen))
+                        .listRowBackground(Color.clear)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("Записи")
@@ -68,10 +77,8 @@ private struct RecordingRow: View {
     @State private var editAlertMessage: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            statusIcon
-                .font(.title2)
-                .frame(width: 24)
+        HStack(spacing: 14) {
+            IconBadge(systemImage: statusSystemImage, tint: statusTint, size: 38)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.platform)
@@ -90,10 +97,7 @@ private struct RecordingRow: View {
             Spacer()
 
             if entry.status == .saved, let durationText = Self.durationFormatter.string(from: entry.callDuration) {
-                Text(durationText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                StatusBadge(text: durationText, tint: Theme.Status.idle, systemImage: "clock")
             }
 
             // Phase 11.3 — the main way most drafts actually get resolved,
@@ -147,7 +151,7 @@ private struct RecordingRow: View {
                 .help("Редагувати звіт")
             }
         }
-        .padding(.vertical, 4)
+        .cardSurface(padding: 14)
         // Windows parity: `RecordingItemView.xaml`'s resume-draft button
         // surfacing `ResumeDraftAsync`'s failure cases via a message box —
         // mac's equivalent is this alert, driven by `resumeDraft()` below.
@@ -222,21 +226,24 @@ private struct RecordingRow: View {
         }
     }
 
-    @ViewBuilder
-    private var statusIcon: some View {
+    // Split into two computed properties (rather than one `@ViewBuilder`
+    // switch returning `Image`s) because `IconBadge` above needs the raw
+    // symbol name + tint as values, not a pre-built `View`.
+    private var statusSystemImage: String {
         switch entry.status {
-        case .recording:
-            Image(systemName: "record.circle.fill")
-                .foregroundStyle(.red)
-        case .saved:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .error:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-        case .draft:
-            Image(systemName: "doc.badge.clock")
-                .foregroundStyle(.yellow)
+        case .recording: return "record.circle.fill"
+        case .saved: return "checkmark.circle.fill"
+        case .error: return "exclamationmark.triangle.fill"
+        case .draft: return "doc.badge.clock"
+        }
+    }
+
+    private var statusTint: Color {
+        switch entry.status {
+        case .recording: return Theme.Status.recording
+        case .saved: return Theme.Status.saved
+        case .error: return Theme.Status.warning
+        case .draft: return Theme.Status.draft
         }
     }
 
