@@ -12,12 +12,15 @@ public enum GoogleDriveUploadSmokeTest {
             return
         }
 
+        guard let folderId = await GoogleDriveUploadService.resolveManagerFolder() else {
+            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
+            return
+        }
+
         print("[\(timestamp())] Завантажую \(filePath) у Google Drive...")
         do {
-            let link = try await GoogleDriveUploadService.upload(filePath: filePath)
+            let link = try await GoogleDriveUploadService.upload(filePath: filePath, folderId: folderId)
             print("[\(timestamp())] ✅ Файл завантажено — \(link)")
-        } catch GoogleDriveUploadService.UploadError.missingFolderId {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
         } catch GoogleServiceAccountAuth.AuthError.missingSecret {
             print("[\(timestamp())] ❌ AppSecrets.googleServiceAccountJson не заповнено в цій збірці.")
         } catch {

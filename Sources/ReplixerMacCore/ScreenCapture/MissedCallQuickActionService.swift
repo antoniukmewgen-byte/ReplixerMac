@@ -21,10 +21,15 @@ import Foundation
 ///   upload just surfaces as `.uploadFailed` and the manager re-clicks the
 ///   same button to retry (same "no separate queue" scoping already applied
 ///   to `MissedCallDeliveryService`, see its doc comment).
-/// - No "Screenshots" Drive subfolder resolution (Windows'
-///   `GetOrCreateUserFolderAsync`) — reuses the same flat
-///   `AppSettings.shared.googleDriveFolderId` every other upload in this
-///   app already targets.
+/// - Screenshots go through `GoogleDriveUploadService.resolveScreenshotsFolder()`,
+///   Windows parity: `MissedCallReportViewModel.ResolveScreenshotFolderIdAsync`
+///   / `GetOrCreateUserFolderAsync` — creates/finds a "Screenshots" subfolder
+///   inside the per-manager folder (itself created inside
+///   `AppSettings.shared.googleDriveFolderId`). Unlike Windows, the resolved
+///   id isn't cached in a view-model field across multiple button taps in
+///   the same dialog session — it's re-resolved per tap, which after the
+///   first tap is a cheap cache hit anyway since `resolveManagerFolder()`
+///   persists its own result in `AppSettings.shared.googleDriveUserFolderId`.
 public enum MissedCallQuickActionService {
     public enum Outcome {
         /// Captured and uploaded — `driveUrl` is what
@@ -94,8 +99,11 @@ public enum MissedCallQuickActionService {
             return .captureFailed
         }
 
+        guard let folderId = await GoogleDriveUploadService.resolveScreenshotsFolder() else {
+            return .uploadFailed("googleDriveFolderId не налаштовано")
+        }
         do {
-            let driveUrl = try await GoogleDriveUploadService.upload(filePath: filePath)
+            let driveUrl = try await GoogleDriveUploadService.upload(filePath: filePath, folderId: folderId)
             return .succeeded(driveUrl: driveUrl)
         } catch {
             return .uploadFailed("\(error)")

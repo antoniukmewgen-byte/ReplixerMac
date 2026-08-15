@@ -106,42 +106,41 @@ public actor CallRecordingCoordinator {
         print("[CallRecordingCoordinator] ⏹️ запис зупинено.")
     }
 
-    /// Phase 11.2 — Windows parity: `HomeViewModel.ManualStartRecording`.
-    /// Windows doesn't need to resolve *which* app is calling for a manual
-    /// start (system-wide WASAPI loopback captures whatever's making sound),
-    /// but mac's CoreAudio process-tap capture always targets one specific
-    /// process — there's no "record whatever's active" fallback. Resolves
-    /// that by probing every `SupportedMessenger` via the same
-    /// `ProcessTapSmokeTest.findProcessObjectID` lookup `callStarted` uses,
-    /// except here against *all* of them rather than one `CallMonitor`
-    /// already identified via its mic+speaker-active heuristic — a manual
-    /// start is explicitly "the user says a call is happening right now", so
-    /// merely being a running process (no active-IO requirement) is enough
-    /// to target it.
+    /// Phase 11.2, revised — Windows parity: `HomeViewModel
+    /// .ManualStartRecording`. Windows never checks for a running messenger
+    /// before a manual start (only its own `_isRecording`/`_isStopping`
+    /// idempotency guards) and always tags the recording with the literal
+    /// platform label `"Ручний запис"`, since `WasapiLoopbackCapture`
+    /// captures whatever's making sound system-wide with no need to resolve
+    /// "which app is calling". An earlier version of this method probed
+    /// `SupportedMessenger.allCases` and *failed* the manual start outright
+    /// if none of the four supported messengers happened to be running —
+    /// that's exactly the messenger dependency Windows doesn't have, so it's
+    /// gone now. `beginRecording(platform:processObjectID:)` is called with
+    /// `processObjectID: nil`, which `AudioMixerEncoder.start` treats as
+    /// "system-wide tap" (see its doc comment) — the mac-side equivalent of
+    /// `WasapiLoopbackCapture`.
     public enum ManualStartOutcome: Equatable, Sendable {
         case started(platform: String)
         case alreadyRecording
-        case noMessengerRunning
         case failed
     }
+
+    /// Windows parity: `PlatformHelper` treats this exact string as a
+    /// first-class platform value (`ToDisplayName`/`ToFileName` both
+    /// special-case it) — mirrored here as a plain string since mac's
+    /// `FileNaming.recordingURL(platform:)` and `RecordingHistory` both
+    /// already accept an arbitrary platform label, same as Windows'
+    /// `RecordingEntry.Platform`.
+    private static let manualPlatformLabel = "Ручний запис"
 
     public func manualStart() -> ManualStartOutcome {
         guard !isRecording else { return .alreadyRecording }
 
-        guard let match = SupportedMessenger.allCases
-            .compactMap({ messenger -> (SupportedMessenger, AudioObjectID)? in
-                ProcessTapSmokeTest.findProcessObjectID(for: messenger).map { (messenger, $0) }
-            })
-            .first
-        else {
-            print("[CallRecordingCoordinator] ⚠️ ручний старт: жоден підтримуваний месенджер не запущений.")
-            return .noMessengerRunning
-        }
-
-        guard beginRecording(platform: match.0.rawValue, processObjectID: match.1) else {
+        guard beginRecording(platform: Self.manualPlatformLabel, processObjectID: nil) else {
             return .failed
         }
-        return .started(platform: match.0.rawValue)
+        return .started(platform: Self.manualPlatformLabel)
     }
 
     /// Phase 11.2 — Windows parity: `HomeViewModel.ManualStopRecording`.
@@ -171,11 +170,13 @@ public actor CallRecordingCoordinator {
     /// where the dialog and the record state live in the same object).
     public var isRecordingNow: Bool { isRecording }
 
-    /// Shared by `callStarted`/`manualStart` — everything after "we have a
-    /// process object to tap" (create the output dir, start the encoder,
-    /// flip bookkeeping, mirror into `RecordingStatusStore`) is identical
-    /// between an auto-detected and a manually-triggered start.
-    private func beginRecording(platform: String, processObjectID: AudioObjectID) -> Bool {
+    /// Shared by `callStarted`/`manualStart` — everything after "we know
+    /// what to tap" (create the output dir, start the encoder, flip
+    /// bookkeeping, mirror into `RecordingStatusStore`) is identical between
+    /// an auto-detected and a manually-triggered start. `processObjectID` is
+    /// `nil` only for `manualStart()`'s system-wide tap — `callStarted`
+    /// always has a real messenger process object in hand by this point.
+    private func beginRecording(platform: String, processObjectID: AudioObjectID?) -> Bool {
         do {
             try FileNaming.ensureRecordingsDirectoryExists()
         } catch {

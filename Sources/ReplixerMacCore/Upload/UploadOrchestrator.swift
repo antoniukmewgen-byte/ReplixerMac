@@ -177,8 +177,18 @@ enum UploadOrchestrator {
             print("[UploadOrchestrator] ℹ️ googleDriveFolderId не налаштовано — пропускаю Google Drive.")
             return (nil, false)
         }
+        // resolveManagerFolder() creates/finds the per-manager subfolder
+        // inside googleDriveFolderId (Windows parity: GetOrCreateUserFolderAsync)
+        // and caches its id in AppSettings.googleDriveUserFolderId; on any
+        // failure it best-effort falls back to the raw parent id instead of
+        // returning nil, so this guard only fires when googleDriveFolderId
+        // itself was empty (already ruled out above) — kept for safety.
+        guard let folderId = await GoogleDriveUploadService.resolveManagerFolder() else {
+            print("[UploadOrchestrator] ℹ️ googleDriveFolderId не налаштовано — пропускаю Google Drive.")
+            return (nil, false)
+        }
         do {
-            let link = try await GoogleDriveUploadService.upload(filePath: filePath)
+            let link = try await GoogleDriveUploadService.upload(filePath: filePath, folderId: folderId)
             print("[UploadOrchestrator] ✅ запис завантажено в Google Drive — \(link)")
             return (link, false)
         } catch {

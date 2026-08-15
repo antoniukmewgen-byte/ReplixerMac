@@ -36,17 +36,26 @@ public enum AudioMixerEncoder {
     private static var finalOutputURL: URL?
     private static var partialOutputURL: URL?
 
-    /// Starts capture+mix+encode for `processObjectID`. Writes to a
-    /// `.inprogress` sibling of `outputURL` (see FileNaming.partialURL) and
-    /// only renames it to `outputURL` on a clean `stop()` — so a crash or
-    /// `kill -9` mid-recording leaves an obviously-partial file behind
-    /// instead of something that looks like a finished recording. No-op
-    /// (returns false) if a recording is already active — callers are
-    /// expected to call `stop()` first. On any failure, whatever CoreAudio
-    /// state was partially created is torn down before returning, so a
-    /// failed start never leaks a tap/aggregate device.
+    /// Starts capture+mix+encode. `processObjectID` targets one specific
+    /// running process's audio (the auto-detected-call path, via
+    /// `CallRecordingCoordinator.callStarted`); pass `nil` for a system-wide
+    /// tap that mixes down *all* process output instead of one process —
+    /// Windows parity: `HomeViewModel.ManualStartRecording` doesn't resolve
+    /// "which app is calling" either, since `WasapiLoopbackCapture` already
+    /// captures whatever's making sound system-wide. See
+    /// `CallRecordingCoordinator.manualStart()`'s doc comment for why manual
+    /// recording specifically needs this branch.
+    ///
+    /// Writes to a `.inprogress` sibling of `outputURL` (see
+    /// FileNaming.partialURL) and only renames it to `outputURL` on a clean
+    /// `stop()` — so a crash or `kill -9` mid-recording leaves an obviously-
+    /// partial file behind instead of something that looks like a finished
+    /// recording. No-op (returns false) if a recording is already active —
+    /// callers are expected to call `stop()` first. On any failure, whatever
+    /// CoreAudio state was partially created is torn down before returning,
+    /// so a failed start never leaks a tap/aggregate device.
     @discardableResult
-    static func start(processObjectID: AudioObjectID, outputURL: URL) -> Bool {
+    static func start(processObjectID: AudioObjectID?, outputURL: URL) -> Bool {
         guard !isActive else {
             print("[AudioMixerEncoder] ⚠️ start() викликано, поки вже активний запис — ігнорую.")
             return false
@@ -132,10 +141,20 @@ public enum AudioMixerEncoder {
         stop()
     }
 
-    private static func performStart(processObjectID: AudioObjectID, outputURL: URL) throws {
-        print("[AudioMixerEncoder] creating tap for process object \(processObjectID)...")
-
-        let tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])
+    private static func performStart(processObjectID: AudioObjectID?, outputURL: URL) throws {
+        let tapDescription: CATapDescription
+        if let processObjectID {
+            print("[AudioMixerEncoder] creating tap for process object \(processObjectID)...")
+            tapDescription = CATapDescription(stereoMixdownOfProcesses: [processObjectID])
+        } else {
+            // Manual start with no specific process to target — an empty
+            // exclude list means "exclude nothing", i.e. tap every process's
+            // output system-wide, same net effect as Windows'
+            // WasapiLoopbackCapture. See `start(processObjectID:outputURL:)`'s
+            // doc comment.
+            print("[AudioMixerEncoder] creating system-wide tap (manual start, no specific process)...")
+            tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        }
         tapDescription.isPrivate = true
         tapDescription.muteBehavior = .unmuted
 

@@ -41,7 +41,12 @@ public enum GoogleDriveFolderAccessSmokeTest {
     /// display *something* for every failure mode, not just the ones it
     /// happened to anticipate.
     public static func check() async -> CheckOutcome {
-        guard let folderId = AppSettings.shared.googleDriveFolderId else {
+        // Sanitizes and self-heals a stray query string/URL wrapper on the
+        // stored id — see GoogleDriveFolderId's doc comment. Without this,
+        // a corrupted id could pass this exact check (files/{id} GET
+        // tolerates the extra text by accident) while every real upload
+        // through GoogleDriveUploadService still 404'd on it.
+        guard let folderId = GoogleDriveFolderId.sanitizedFromSettings() else {
             return .failure("У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
         }
 

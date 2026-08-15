@@ -36,9 +36,25 @@ import ReplixerMacCore
 /// UI-driven (non-stdin) login flow is designed — that redesign is out of
 /// scope for this sub-phase.
 struct ProfileView: View {
-    @State private var driveFolderId: String = AppSettings.shared.googleDriveFolderId ?? ""
+    // Sanitized on read, not just on save — GoogleDriveFolderId.sanitize
+    // (ReplixerMacCore) handles a value that was saved before this
+    // sanitization existed (see its doc comment); onAppear below also
+    // writes the corrected value back to AppSettings via
+    // `sanitizedFromSettings()` if it differs from what's stored, so
+    // background uploads that run before this screen is ever opened
+    // self-heal too, not just this text field.
+    @State private var driveFolderId: String =
+        GoogleDriveFolderId.sanitize(AppSettings.shared.googleDriveFolderId ?? "")
     @State private var isTestingDriveConnection = false
-    @State private var driveTestResult: GoogleDriveFolderAccessSmokeTest.CheckOutcome?
+    // Seeded from AppSettings.isDriveConnected (not always nil) so a
+    // previously-verified connection shows its green "Доступ підключено"
+    // label immediately on appear, without forcing a fresh
+    // "Перевірити з'єднання" click every time this screen opens. Overwritten
+    // by every future testDriveConnection() call, and reset back to nil the
+    // moment driveFolderId is edited (saveDriveFolderId) — an unverified
+    // edit shouldn't keep showing a stale green label.
+    @State private var driveTestResult: GoogleDriveFolderAccessSmokeTest.CheckOutcome? =
+        AppSettings.shared.isDriveConnected ? .success("Доступ підключено") : nil
 
     // Windows parity: `ProfileViewModel.FilteredTelegramChats`/
     // `SelectedTelegramChat` — a picker over `AppSecrets.telegramChats`
@@ -65,7 +81,9 @@ struct ProfileView: View {
     @State private var kommoSubdomain: String = AppSettings.shared.kommoSubdomain ?? ""
     @State private var kommoApiToken: String = AppSettings.shared.kommoApiToken ?? ""
     @State private var isTestingKommoConnection = false
-    @State private var kommoTestResult: KommoService.CheckOutcome?
+    // Same persisted-status seeding as driveTestResult above.
+    @State private var kommoTestResult: KommoService.CheckOutcome? =
+        AppSettings.shared.isKommoConnected ? .success("Доступ підключено") : nil
 
     // Phase 10.1c fix, extended after the "isReadyToAutoSave" attempt below
     // turned out not to be enough: a prior "telegramApiHash null-wipe"
@@ -154,12 +172,18 @@ struct ProfileView: View {
                 }
 
                 if telegramHasSavedSession {
-                    Label("Сесія збережена на диску", systemImage: "checkmark.circle.fill")
+                    // Same "Доступ підключено" wording as Drive/Kommo above
+                    // — a saved TDLib session on disk (checked via
+                    // `TelegramAuthClient.hasSavedSession`) is this
+                    // section's equivalent of a verified connection, so it
+                    // gets the same green label instead of a differently-
+                    // worded one.
+                    Label("Доступ підключено", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Theme.Status.saved)
                 } else {
                     Label("Сесії ще немає", systemImage: "circle")
                         .foregroundStyle(.secondary)
-                    Text("Перша авторизація виконується через консоль Xcode (`--telegram-login-smoke-test`) — після неї сесія збережеться і ця сторінка покаже \"Сесія збережена\".")
+                    Text("Перша авторизація виконується через консоль Xcode (`--telegram-login-smoke-test`) — після неї сесія збережеться і ця сторінка покаже \"Доступ підключено\".")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -223,11 +247,25 @@ struct ProfileView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Профіль")
-        // See isReadyToAutoSave's doc comment above — deliberately deferred
-        // one runloop tick past onAppear (not set true directly inside it)
-        // so this also outlasts any phantom empty-value onChange firing
-        // during the same initial layout pass onAppear itself belongs to.
         .onAppear {
+            // Self-heal a Drive folder id that got saved before
+            // GoogleDriveFolderId.sanitize existed — see that type's doc
+            // comment for exactly how a stray "?hl=ru" left over from a
+            // copy-pasted browser URL let "Перевірити з'єднання" report
+            // success while every real upload still 404'd. This mirrors
+            // `driveFolderId`'s own initializer above; done again here (not
+            // just there) because `sanitizedFromSettings()` is also the
+            // thing that writes the corrected value back to AppSettings —
+            // the initializer alone only fixes what this text field shows.
+            if let sanitized = GoogleDriveFolderId.sanitizedFromSettings(), sanitized != driveFolderId {
+                driveFolderId = sanitized
+                AppSettings.shared.isDriveConnected = false
+                driveTestResult = nil
+            }
+            // See isReadyToAutoSave's doc comment above — deliberately deferred
+            // one runloop tick past onAppear (not set true directly inside it)
+            // so this also outlasts any phantom empty-value onChange firing
+            // during the same initial layout pass onAppear itself belongs to.
             DispatchQueue.main.async {
                 isReadyToAutoSave = true
             }
@@ -235,8 +273,15 @@ struct ProfileView: View {
     }
 
     private func saveDriveFolderId() {
-        let trimmed = driveFolderId.trimmingCharacters(in: .whitespacesAndNewlines)
-        AppSettings.shared.googleDriveFolderId = trimmed.isEmpty ? nil : trimmed
+        let sanitized = GoogleDriveFolderId.sanitize(driveFolderId)
+        if sanitized != driveFolderId {
+            driveFolderId = sanitized
+        }
+        AppSettings.shared.googleDriveFolderId = sanitized.isEmpty ? nil : sanitized
+        // Edited without re-verifying — don't keep showing a green label for
+        // a folder id nobody has actually confirmed access to yet.
+        AppSettings.shared.isDriveConnected = false
+        driveTestResult = nil
     }
 
     private func testDriveConnection() {
@@ -245,7 +290,14 @@ struct ProfileView: View {
         Task {
             let result = await GoogleDriveFolderAccessSmokeTest.check()
             isTestingDriveConnection = false
-            driveTestResult = result
+            switch result {
+            case .success:
+                AppSettings.shared.isDriveConnected = true
+                driveTestResult = .success("Доступ підключено")
+            case .failure(let message):
+                AppSettings.shared.isDriveConnected = false
+                driveTestResult = .failure(message)
+            }
         }
     }
 
@@ -271,11 +323,17 @@ struct ProfileView: View {
     private func saveKommoSubdomain() {
         let trimmed = kommoSubdomain.trimmingCharacters(in: .whitespacesAndNewlines)
         AppSettings.shared.kommoSubdomain = trimmed.isEmpty ? nil : trimmed
+        // Same "unverified edit invalidates the cached status" reasoning as
+        // saveDriveFolderId above.
+        AppSettings.shared.isKommoConnected = false
+        kommoTestResult = nil
     }
 
     private func saveKommoApiToken() {
         let trimmed = kommoApiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         AppSettings.shared.kommoApiToken = trimmed.isEmpty ? nil : trimmed
+        AppSettings.shared.isKommoConnected = false
+        kommoTestResult = nil
     }
 
     private func testKommoConnection() {
@@ -284,7 +342,14 @@ struct ProfileView: View {
         Task {
             let result = await KommoService.testConnection()
             isTestingKommoConnection = false
-            kommoTestResult = result
+            switch result {
+            case .success:
+                AppSettings.shared.isKommoConnected = true
+                kommoTestResult = .success("Доступ підключено")
+            case .failure(let message):
+                AppSettings.shared.isKommoConnected = false
+                kommoTestResult = .failure(message)
+            }
         }
     }
 }

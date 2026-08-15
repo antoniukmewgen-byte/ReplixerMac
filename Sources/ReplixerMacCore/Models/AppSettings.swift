@@ -69,6 +69,30 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Windows parity: `AppSettings.UserFolderId` — the Drive id of the
+    // per-manager subfolder created (once) inside `googleDriveFolderId`,
+    // cached here so every subsequent upload reuses it instead of re-
+    // querying Drive's `Files.List` on every single recording.
+    // `GoogleDriveUploadService.resolveManagerFolder()` is the only writer;
+    // it's `nil` until the first successful resolve. Not reset automatically
+    // if `managerName` changes later — same "stale cache until something
+    // explicitly clears it" behavior Windows has (ProfileView's account-
+    // reset flow is the only thing that clears `UserFolderId` there).
+    public var googleDriveUserFolderId: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
+    // Persists the last "Перевірити з'єднання" outcome for Drive, so
+    // ProfileView can show a green "Доступ підключено" label as soon as the
+    // screen appears — not just for the rest of the current app session.
+    // Written by ProfileView.testDriveConnection() on every check (true on
+    // success, false on failure); also reset to false whenever
+    // `googleDriveFolderId` is edited, since a stale green label for a
+    // folder id nobody has actually verified yet would be misleading.
+    public var isDriveConnected: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     // Phase 7.7: gates whether `SetupWizardView` shows on launch. Windows-
     // parity source: `AppSettings.IsSetupComplete`, but mac's wizard is
     // scoped down to just confirming `managerName` (see that view's doc
@@ -106,14 +130,18 @@ public final class AppSettings: Codable {
     // `IsKommoEnabled` flag here — same "presence of both required fields
     // IS the enabled signal" convention `telegramConfigured`
     // (CallRecordingCoordinator) already uses for Telegram, rather than a
-    // redundant boolean that could drift out of sync with them. No cached
-    // `IsKommoConnected` either, matching how Drive's own "test connection"
-    // result (ProfileView's `driveTestResult`) already stays UI-local
-    // @State instead of persisted.
+    // redundant boolean that could drift out of sync with them.
     public var kommoSubdomain: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
     public var kommoApiToken: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
+    // Same persisted-status role as `isDriveConnected` above, for Kommo's
+    // own "Перевірити з'єднання" button — reset to false whenever
+    // `kommoSubdomain`/`kommoApiToken` is edited.
+    public var isKommoConnected: Bool {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -137,25 +165,31 @@ public final class AppSettings: Codable {
         case telegramChatId
         case telegramTopicId
         case googleDriveFolderId
+        case googleDriveUserFolderId
+        case isDriveConnected
         case isSetupComplete
         case isAutoStartEnabled
         case position
         case kommoSubdomain
         case kommoApiToken
+        case isKommoConnected
         case workDayStartMinutes
         case workDayEndMinutes
     }
 
-    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
         self.managerName = managerName
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
         self.googleDriveFolderId = googleDriveFolderId
+        self.googleDriveUserFolderId = googleDriveUserFolderId
+        self.isDriveConnected = isDriveConnected
         self.isSetupComplete = isSetupComplete
         self.isAutoStartEnabled = isAutoStartEnabled
         self.position = position
         self.kommoSubdomain = kommoSubdomain
         self.kommoApiToken = kommoApiToken
+        self.isKommoConnected = isKommoConnected
         self.workDayStartMinutes = workDayStartMinutes
         self.workDayEndMinutes = workDayEndMinutes
     }
@@ -168,6 +202,8 @@ public final class AppSettings: Codable {
         telegramChatId = try container.decodeIfPresent(Int64.self, forKey: .telegramChatId)
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
         googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
+        googleDriveUserFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveUserFolderId)
+        isDriveConnected = try container.decodeIfPresent(Bool.self, forKey: .isDriveConnected) ?? false
         // Missing key means this settings.json predates Phase 7.7 — true
         // "fresh install" (the file was just bootstrapped, nothing
         // configured yet) should still show the wizard, but an existing
@@ -186,6 +222,7 @@ public final class AppSettings: Codable {
         position = try container.decodeIfPresent(String.self, forKey: .position) ?? "Менеджер"
         kommoSubdomain = try container.decodeIfPresent(String.self, forKey: .kommoSubdomain)
         kommoApiToken = try container.decodeIfPresent(String.self, forKey: .kommoApiToken)
+        isKommoConnected = try container.decodeIfPresent(Bool.self, forKey: .isKommoConnected) ?? false
         workDayStartMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayStartMinutes) ?? 9 * 60
         workDayEndMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayEndMinutes) ?? 21 * 60
     }
@@ -196,11 +233,14 @@ public final class AppSettings: Codable {
         try container.encode(telegramChatId, forKey: .telegramChatId)
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
+        try container.encode(googleDriveUserFolderId, forKey: .googleDriveUserFolderId)
+        try container.encode(isDriveConnected, forKey: .isDriveConnected)
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
         try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
         try container.encode(position, forKey: .position)
         try container.encode(kommoSubdomain, forKey: .kommoSubdomain)
         try container.encode(kommoApiToken, forKey: .kommoApiToken)
+        try container.encode(isKommoConnected, forKey: .isKommoConnected)
         try container.encode(workDayStartMinutes, forKey: .workDayStartMinutes)
         try container.encode(workDayEndMinutes, forKey: .workDayEndMinutes)
     }

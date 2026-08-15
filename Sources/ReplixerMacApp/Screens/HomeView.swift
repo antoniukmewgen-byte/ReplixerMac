@@ -169,8 +169,6 @@ struct HomeView: View {
             switch await coordinator.manualStart() {
             case .started, .alreadyRecording:
                 break
-            case .noMessengerRunning:
-                manualStartError = "Не знайшов жодного підтримуваного месенджера (Telegram/WhatsApp/Viber/Ringostat) серед запущених застосунків. Відкрий один із них і спробуй ще раз."
             case .failed:
                 manualStartError = "Не вдалося запустити запис. Перевір дозвіл мікрофона в Налаштуваннях системи."
             }
