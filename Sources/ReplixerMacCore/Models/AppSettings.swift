@@ -57,6 +57,17 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 7.8: Windows parity `AppSettings.TelegramPhone` — the phone
+    // number entered into `TelegramAuthSection`'s "Авторизувати" flow,
+    // persisted so the field is pre-filled next time (SetupWizardView or
+    // ProfileView) rather than asking again on every reauthorize. Purely a
+    // UI convenience: `TelegramAuthClient.login(phone:inputHandler:)` takes
+    // the phone as a direct parameter each time, it doesn't read this field
+    // itself.
+    public var telegramPhone: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     // Phase 12: Windows parity `ProfileViewModel.IsTelegramEnabled` — same
     // opt-out-on-top-of-presence reasoning as isGoogleDriveEnabled above,
     // just for the Telegram leg (gates on top of telegramChatId presence).
@@ -136,9 +147,11 @@ public final class AppSettings: Codable {
     // Phase 10.0: manager's role, gating call-report field visibility via
     // PositionPolicy — Windows parity source: AppSettings.cs's `Position`.
     // Defaults to "Менеджер" (Windows' own default), the only role with
-    // every report field visible; unlike Windows this never gates a
-    // hardcoded Telegram-chat picker (mac has no such picker — see
-    // SetupWizardView's doc comment), it only feeds PositionPolicy.
+    // every report field visible. Also gates `ProfileView`'s Telegram chat
+    // `Picker` (`PositionPolicy.filteredTelegramChats`, added Phase 7.6) —
+    // unlike Windows, that picker doesn't live in the setup wizard at all
+    // (see `SetupWizardView`'s doc comment on why Position/the chat picker
+    // stay out of it), only in Profile/Settings.
     public var position: String {
         didSet { AppSettings.store.scheduleSave(self) }
     }
@@ -189,6 +202,7 @@ public final class AppSettings: Codable {
         case managerName
         case telegramChatId
         case telegramTopicId
+        case telegramPhone
         case isTelegramEnabled
         case googleDriveFolderId
         case googleDriveUserFolderId
@@ -205,10 +219,11 @@ public final class AppSettings: Codable {
         case workDayEndMinutes
     }
 
-    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, telegramPhone: String? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
         self.managerName = managerName
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
+        self.telegramPhone = telegramPhone
         self.isTelegramEnabled = isTelegramEnabled
         self.googleDriveFolderId = googleDriveFolderId
         self.googleDriveUserFolderId = googleDriveUserFolderId
@@ -232,6 +247,7 @@ public final class AppSettings: Codable {
         managerName = try container.decodeIfPresent(String.self, forKey: .managerName) ?? NSUserName()
         telegramChatId = try container.decodeIfPresent(Int64.self, forKey: .telegramChatId)
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
+        telegramPhone = try container.decodeIfPresent(String.self, forKey: .telegramPhone)
         // Missing key means this settings.json predates Phase 12 — default
         // true (opt-out semantics: an existing install with a chat already
         // configured was implicitly "enabled" before this flag existed).
@@ -269,6 +285,7 @@ public final class AppSettings: Codable {
         try container.encode(managerName, forKey: .managerName)
         try container.encode(telegramChatId, forKey: .telegramChatId)
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
+        try container.encode(telegramPhone, forKey: .telegramPhone)
         try container.encode(isTelegramEnabled, forKey: .isTelegramEnabled)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
         try container.encode(googleDriveUserFolderId, forKey: .googleDriveUserFolderId)

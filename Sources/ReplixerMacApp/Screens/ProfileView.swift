@@ -19,22 +19,13 @@ import ReplixerMacCore
 /// constant, not a per-user setting (see `AppSecrets.example.swift`), so
 /// there's nothing here left to edit.
 ///
-/// **Deliberate scope cut vs. Windows:** Windows' Profile screen drives a
-/// full interactive phone+code+2FA Telegram login right from this screen
-/// (`ProfileViewModel`'s `AuthorizeCommand` + a modal input dialog). Mac's
-/// `TelegramAuthClient.login()` still prompts for that over blocking
-/// `readLine()` (see its doc comment) — safe today only because testing
-/// happens through Xcode's console, which forwards typed input to a
-/// debugger-launched process's stdin. Wiring a button in this screen
-/// directly to `login()` would hang indefinitely in a real double-clicked
-/// `.app` (no console, nothing to satisfy that `readLine()`) for anyone
-/// without a session already on disk — so this screen surfaces the
-/// credential fields and a non-interactive "is a session already saved?"
-/// readout (`TelegramAuthClient.hasSavedSession`), but no "Authorize"
-/// button. First-time login still goes through
-/// `--telegram-login-smoke-test` (Xcode console) until a properly
-/// UI-driven (non-stdin) login flow is designed — that redesign is out of
-/// scope for this sub-phase.
+/// Phase 7.8: Windows parity restored — `TelegramAuthClient.login(phone:
+/// inputHandler:)` now routes the code/2FA prompt to UI instead of blocking
+/// `readLine()` (see its doc comment), so this screen's Telegram section
+/// embeds the real interactive `TelegramAuthSection` (phone field +
+/// Authorize/Log out buttons, shared with `SetupWizardView`) instead of the
+/// old read-only `hasSavedSession` readout — matching `ProfileViewModel`'s
+/// `TelegramActionCommand`/`AuthorizeTelegramAsync`.
 // SwiftUI's `Picker` logs "the selection ... is invalid and does not have an
 // associated tag" when an `Optional<T>`-typed selection is paired with a
 // `nil`-tagged placeholder row alongside `ForEach`-generated non-nil tags —
@@ -93,11 +84,6 @@ struct ProfileView: View {
     // saved yet, or if the saved id no longer matches any configured
     // chat — e.g. `AppSecrets.telegramChats` hasn't been filled in).
     @State private var selectedTelegramChat: TelegramChatSelection = ProfileView.initialSelectedTelegramChat()
-    // Snapshotted on appear, not recomputed per-render — it's a filesystem
-    // stat, not a SwiftUI-observable value, and this screen has no signal
-    // that would tell it to refresh mid-session anyway (no UI here ever
-    // creates or deletes the session).
-    @State private var telegramHasSavedSession = TelegramAuthClient.hasSavedSession
 
     // Phase 12: Windows parity `ProfileViewModel.IsKommoEnabled` — see
     // isDriveEnabled above for the same reasoning.
@@ -210,22 +196,7 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if telegramHasSavedSession {
-                        // Same "Доступ підключено" wording as Drive/Kommo above
-                        // — a saved TDLib session on disk (checked via
-                        // `TelegramAuthClient.hasSavedSession`) is this
-                        // section's equivalent of a verified connection, so it
-                        // gets the same green label instead of a differently-
-                        // worded one.
-                        Label("Доступ підключено", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.Status.saved)
-                    } else {
-                        Label("Сесії ще немає", systemImage: "circle")
-                            .foregroundStyle(.secondary)
-                        Text("Перша авторизація виконується через консоль Xcode (`--telegram-login-smoke-test`) — після неї сесія збережеться і ця сторінка покаже \"Доступ підключено\".")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    TelegramAuthSection()
                 }
             } header: {
                 Label("Telegram", systemImage: "paperplane.fill")
