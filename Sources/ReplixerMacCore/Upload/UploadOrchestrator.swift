@@ -177,6 +177,12 @@ enum UploadOrchestrator {
             print("[UploadOrchestrator] ℹ️ googleDriveFolderId не налаштовано — пропускаю Google Drive.")
             return (nil, false)
         }
+        // Phase 12: Windows parity `IsGoogleDriveEnabled` — configured but
+        // paused should behave exactly like "not configured", not a failure.
+        guard AppSettings.shared.isGoogleDriveEnabled else {
+            print("[UploadOrchestrator] ℹ️ Google Drive вимкнено (isGoogleDriveEnabled=false) — пропускаю.")
+            return (nil, false)
+        }
         // resolveManagerFolder() creates/finds the per-manager subfolder
         // inside googleDriveFolderId (Windows parity: GetOrCreateUserFolderAsync)
         // and caches its id in AppSettings.googleDriveUserFolderId; on any
@@ -230,6 +236,12 @@ enum UploadOrchestrator {
             print("[UploadOrchestrator] ℹ️ telegramChatId не налаштовано — пропускаю Telegram.")
             return (nil, false)
         }
+        // Phase 12: Windows parity `IsTelegramEnabled` — see attemptGoogleDrive's
+        // isGoogleDriveEnabled gate above for the same reasoning.
+        guard AppSettings.shared.isTelegramEnabled else {
+            print("[UploadOrchestrator] ℹ️ Telegram вимкнено (isTelegramEnabled=false) — пропускаю.")
+            return (nil, false)
+        }
         guard let client else {
             print("[UploadOrchestrator] ⚠️ Telegram налаштовано, але клієнт недоступний (авторизація не пройшла) — позначаю як помилку для фонового retry.")
             return (nil, true)
@@ -275,6 +287,9 @@ enum UploadOrchestrator {
         crmUrl: String?, caption: String, driveUrl: String?, callStartedAt: Date?, callType: String?, existingNoteId: Int64?
     ) async -> Int64? {
         guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return existingNoteId }
+        // Phase 12: Windows parity `IsKommoEnabled` — see attemptGoogleDrive's
+        // isGoogleDriveEnabled gate above for the same reasoning.
+        guard AppSettings.shared.isKommoEnabled else { return existingNoteId }
         guard let crmUrl else { return existingNoteId }
         let text: String = {
             guard let driveUrl, !driveUrl.isEmpty else { return caption }

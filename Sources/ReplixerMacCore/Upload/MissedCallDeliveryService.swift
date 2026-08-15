@@ -133,12 +133,14 @@ public final class MissedCallDeliveryService {
         guard beginInFlight(item.id) else { return }
         defer { endInFlight(item.id) }
 
-        // Same "not configured" / "no crmUrl" opt-in-automation shape as
-        // UploadOrchestrator.attemptKommo — but here there's nothing else
-        // this entry could deliver to, so staying queued is the only
-        // outcome until Kommo gets configured (or forever, if it never is —
-        // same accepted gap as a recording whose Kommo note never posts).
-        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return }
+        // Same "not configured/not enabled" opt-in-automation shape as
+        // UploadOrchestrator.attemptKommo (Phase 12: isKommoEnabled gates
+        // this too, not just presence of subdomain/token) — but here
+        // there's nothing else this entry could deliver to, so staying
+        // queued is the only outcome until Kommo gets configured and
+        // switched on (or forever, if it never is — same accepted gap as a
+        // recording whose Kommo note never posts).
+        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil, AppSettings.shared.isKommoEnabled else { return }
 
         let noteId: Int64?
         do {

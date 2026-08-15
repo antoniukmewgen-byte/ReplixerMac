@@ -35,7 +35,26 @@ import ReplixerMacCore
 /// `--telegram-login-smoke-test` (Xcode console) until a properly
 /// UI-driven (non-stdin) login flow is designed — that redesign is out of
 /// scope for this sub-phase.
+// SwiftUI's `Picker` logs "the selection ... is invalid and does not have an
+// associated tag" when an `Optional<T>`-typed selection is paired with a
+// `nil`-tagged placeholder row alongside `ForEach`-generated non-nil tags —
+// a known framework quirk, not a sign of a real data/logic bug (the filter
+// logic backing `selectedTelegramChat` was independently verified sound).
+// Sidestepped structurally by never using a `nil` tag at all: `.none` is
+// itself a valid, non-optional case, so every row Picker ever sees has a
+// concrete tag.
+private enum TelegramChatSelection: Hashable {
+    case none
+    case chat(TelegramChat)
+}
+
 struct ProfileView: View {
+    // Phase 12: Windows parity `ProfileViewModel.IsGoogleDriveEnabled` — a
+    // real opt-out toggle on top of folder-id presence (see
+    // AppSettings.isGoogleDriveEnabled's doc comment). onChange writes
+    // straight back to AppSettings, same pattern as every other field on
+    // this screen.
+    @State private var isDriveEnabled = AppSettings.shared.isGoogleDriveEnabled
     // Sanitized on read, not just on save — GoogleDriveFolderId.sanitize
     // (ReplixerMacCore) handles a value that was saved before this
     // sanitization existed (see its doc comment); onAppear below also
@@ -64,18 +83,25 @@ struct ProfileView: View {
     // Settings, never rendered simultaneously), so computing the filtered
     // list once here — rather than reactively, like Windows' cross-VM
     // property-changed plumbing — is enough.
+    // Phase 12: Windows parity `ProfileViewModel.IsTelegramEnabled` — see
+    // isDriveEnabled above for the same reasoning.
+    @State private var isTelegramEnabled = AppSettings.shared.isTelegramEnabled
     private let filteredTelegramChats = ProfileView.computeFilteredTelegramChats()
     // Initial selection mirrors Windows' constructor logic: Кваліфікатор
     // always lands on the one chat it's allowed to see; every other role
     // matches whatever chat/topic id pair is already saved (nil if none
     // saved yet, or if the saved id no longer matches any configured
     // chat — e.g. `AppSecrets.telegramChats` hasn't been filled in).
-    @State private var selectedTelegramChat: TelegramChat? = ProfileView.initialSelectedTelegramChat()
+    @State private var selectedTelegramChat: TelegramChatSelection = ProfileView.initialSelectedTelegramChat()
     // Snapshotted on appear, not recomputed per-render — it's a filesystem
     // stat, not a SwiftUI-observable value, and this screen has no signal
     // that would tell it to refresh mid-session anyway (no UI here ever
     // creates or deletes the session).
     @State private var telegramHasSavedSession = TelegramAuthClient.hasSavedSession
+
+    // Phase 12: Windows parity `ProfileViewModel.IsKommoEnabled` — see
+    // isDriveEnabled above for the same reasoning.
+    @State private var isKommoEnabled = AppSettings.shared.isKommoEnabled
 
     // Phase 10.1a
     @State private var kommoSubdomain: String = AppSettings.shared.kommoSubdomain ?? ""
@@ -120,32 +146,39 @@ struct ProfileView: View {
             // `.green`/`.orange` — no field, onChange, or save/clear logic
             // below changed.
             Section {
-                TextField("ID теки Google Drive", text: $driveFolderId)
-                    .onSubmit(saveDriveFolderId)
-                    .onChange(of: driveFolderId) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveDriveFolderId()
+                Toggle("Автоматично завантажувати запис на Google Drive", isOn: $isDriveEnabled)
+                    .onChange(of: isDriveEnabled) { _, newValue in
+                        AppSettings.shared.isGoogleDriveEnabled = newValue
                     }
 
-                Button {
-                    testDriveConnection()
-                } label: {
-                    if isTestingDriveConnection {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Перевірити з'єднання")
-                    }
-                }
-                .disabled(isTestingDriveConnection)
+                if isDriveEnabled {
+                    TextField("ID теки Google Drive", text: $driveFolderId)
+                        .onSubmit(saveDriveFolderId)
+                        .onChange(of: driveFolderId) { _, _ in
+                            guard isReadyToAutoSave else { return }
+                            saveDriveFolderId()
+                        }
 
-                if let driveTestResult {
-                    switch driveTestResult {
-                    case .success(let message):
-                        Label(message, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.Status.saved)
-                    case .failure(let message):
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Theme.Status.warning)
+                    Button {
+                        testDriveConnection()
+                    } label: {
+                        if isTestingDriveConnection {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Перевірити з'єднання")
+                        }
+                    }
+                    .disabled(isTestingDriveConnection)
+
+                    if let driveTestResult {
+                        switch driveTestResult {
+                        case .success(let message):
+                            Label(message, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(Theme.Status.saved)
+                        case .failure(let message):
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Theme.Status.warning)
+                        }
                     }
                 }
             } header: {
@@ -153,85 +186,99 @@ struct ProfileView: View {
             }
 
             Section {
-                Picker("Чат", selection: $selectedTelegramChat) {
-                    Text("Оберіть чат").tag(nil as TelegramChat?)
-                    ForEach(filteredTelegramChats) { chat in
-                        Text(chat.name).tag(chat as TelegramChat?)
+                Toggle("Автоматично надсилати запис у Telegram", isOn: $isTelegramEnabled)
+                    .onChange(of: isTelegramEnabled) { _, newValue in
+                        AppSettings.shared.isTelegramEnabled = newValue
                     }
-                }
-                .onChange(of: selectedTelegramChat) { _, newValue in
-                    guard let newValue else { return }
-                    AppSettings.shared.telegramChatId = newValue.chatId
-                    AppSettings.shared.telegramTopicId = newValue.topicId
-                }
 
-                if filteredTelegramChats.isEmpty {
-                    Text("Список чатів порожній — заповніть `AppSecrets.telegramChats` реальними TDLib id (див. `--telegram-list-chats-smoke-test`).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                if isTelegramEnabled {
+                    Picker("Чат", selection: $selectedTelegramChat) {
+                        Text("Оберіть чат").tag(TelegramChatSelection.none)
+                        ForEach(filteredTelegramChats) { chat in
+                            Text(chat.name).tag(TelegramChatSelection.chat(chat))
+                        }
+                    }
+                    .onChange(of: selectedTelegramChat) { _, newValue in
+                        guard case .chat(let chat) = newValue else { return }
+                        AppSettings.shared.telegramChatId = chat.chatId
+                        AppSettings.shared.telegramTopicId = chat.topicId
+                    }
 
-                if telegramHasSavedSession {
-                    // Same "Доступ підключено" wording as Drive/Kommo above
-                    // — a saved TDLib session on disk (checked via
-                    // `TelegramAuthClient.hasSavedSession`) is this
-                    // section's equivalent of a verified connection, so it
-                    // gets the same green label instead of a differently-
-                    // worded one.
-                    Label("Доступ підключено", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(Theme.Status.saved)
-                } else {
-                    Label("Сесії ще немає", systemImage: "circle")
-                        .foregroundStyle(.secondary)
-                    Text("Перша авторизація виконується через консоль Xcode (`--telegram-login-smoke-test`) — після неї сесія збережеться і ця сторінка покаже \"Доступ підключено\".")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if filteredTelegramChats.isEmpty {
+                        Text("Список чатів порожній — заповніть `AppSecrets.telegramChats` реальними TDLib id (див. `--telegram-list-chats-smoke-test`).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if telegramHasSavedSession {
+                        // Same "Доступ підключено" wording as Drive/Kommo above
+                        // — a saved TDLib session on disk (checked via
+                        // `TelegramAuthClient.hasSavedSession`) is this
+                        // section's equivalent of a verified connection, so it
+                        // gets the same green label instead of a differently-
+                        // worded one.
+                        Label("Доступ підключено", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.Status.saved)
+                    } else {
+                        Label("Сесії ще немає", systemImage: "circle")
+                            .foregroundStyle(.secondary)
+                        Text("Перша авторизація виконується через консоль Xcode (`--telegram-login-smoke-test`) — після неї сесія збережеться і ця сторінка покаже \"Доступ підключено\".")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } header: {
                 Label("Telegram", systemImage: "paperplane.fill")
             }
 
             Section {
-                TextField("Subdomain (напр. myaccount)", text: $kommoSubdomain)
-                    .onSubmit(saveKommoSubdomain)
-                    .onChange(of: kommoSubdomain) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveKommoSubdomain()
-                    }
-                // No "Очистити" button here (unlike the old telegramApiHash
-                // field this replaced) — pressing Return on an emptied
-                // field (onSubmit) is still an explicit, discoverable way
-                // to clear a saved token on purpose; see saveKommoApiToken.
-                SecureField("API токен", text: $kommoApiToken)
-                    .onSubmit(saveKommoApiToken)
-                    .onChange(of: kommoApiToken) { _, newValue in
-                        guard isReadyToAutoSave else { return }
-                        // Same reasoning as telegramApiHash's onChange
-                        // above — never let a phantom empty fire wipe a
-                        // real saved token.
-                        guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        saveKommoApiToken()
+                Toggle("Автоматично додавати нотатку в угоду Kommo", isOn: $isKommoEnabled)
+                    .onChange(of: isKommoEnabled) { _, newValue in
+                        AppSettings.shared.isKommoEnabled = newValue
                     }
 
-                Button {
-                    testKommoConnection()
-                } label: {
-                    if isTestingKommoConnection {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Перевірити з'єднання")
-                    }
-                }
-                .disabled(isTestingKommoConnection)
+                if isKommoEnabled {
+                    TextField("Subdomain (напр. myaccount)", text: $kommoSubdomain)
+                        .onSubmit(saveKommoSubdomain)
+                        .onChange(of: kommoSubdomain) { _, _ in
+                            guard isReadyToAutoSave else { return }
+                            saveKommoSubdomain()
+                        }
+                    // No "Очистити" button here (unlike the old telegramApiHash
+                    // field this replaced) — pressing Return on an emptied
+                    // field (onSubmit) is still an explicit, discoverable way
+                    // to clear a saved token on purpose; see saveKommoApiToken.
+                    SecureField("API токен", text: $kommoApiToken)
+                        .onSubmit(saveKommoApiToken)
+                        .onChange(of: kommoApiToken) { _, newValue in
+                            guard isReadyToAutoSave else { return }
+                            // Same reasoning as telegramApiHash's onChange
+                            // above — never let a phantom empty fire wipe a
+                            // real saved token.
+                            guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                            saveKommoApiToken()
+                        }
 
-                if let kommoTestResult {
-                    switch kommoTestResult {
-                    case .success(let message):
-                        Label(message, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.Status.saved)
-                    case .failure(let message):
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Theme.Status.warning)
+                    Button {
+                        testKommoConnection()
+                    } label: {
+                        if isTestingKommoConnection {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Перевірити з'єднання")
+                        }
+                    }
+                    .disabled(isTestingKommoConnection)
+
+                    if let kommoTestResult {
+                        switch kommoTestResult {
+                        case .success(let message):
+                            Label(message, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(Theme.Status.saved)
+                        case .failure(let message):
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Theme.Status.warning)
+                        }
                     }
                 }
             } header: {
@@ -308,14 +355,17 @@ struct ProfileView: View {
         PositionPolicy.filteredTelegramChats(AppSecrets.telegramChats, position: AppSettings.shared.position)
     }
 
-    private static func initialSelectedTelegramChat() -> TelegramChat? {
+    private static func initialSelectedTelegramChat() -> TelegramChatSelection {
         let chats = computeFilteredTelegramChats()
+        let match: TelegramChat?
         if AppSettings.shared.position == "Кваліфікатор" {
-            return chats.first
+            match = chats.first
+        } else {
+            match = chats.first {
+                $0.chatId == AppSettings.shared.telegramChatId && $0.topicId == AppSettings.shared.telegramTopicId
+            }
         }
-        return chats.first {
-            $0.chatId == AppSettings.shared.telegramChatId && $0.topicId == AppSettings.shared.telegramTopicId
-        }
+        return match.map(TelegramChatSelection.chat) ?? .none
     }
 
     // Same "empty clears the setting" stance as the Kommo field below —

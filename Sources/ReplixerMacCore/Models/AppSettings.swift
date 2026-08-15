@@ -57,6 +57,13 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 12: Windows parity `ProfileViewModel.IsTelegramEnabled` — same
+    // opt-out-on-top-of-presence reasoning as isGoogleDriveEnabled above,
+    // just for the Telegram leg (gates on top of telegramChatId presence).
+    public var isTelegramEnabled: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     // Phase 5, revised post-Phase-7.6: Google Drive upload. Now matches
     // Windows exactly — the service-account JSON itself is a build-time
     // constant (`AppSecrets.googleServiceAccountJson`, see
@@ -66,6 +73,18 @@ public final class AppSettings: Codable {
     // the only Drive-related thing left for the user to configure. Public
     // since Phase 7.6 (ProfileView's Google Drive section).
     public var googleDriveFolderId: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
+    // Phase 12: Windows parity `ProfileViewModel.IsGoogleDriveEnabled` — a
+    // real opt-out toggle on top of folder-id presence. Before this, Drive
+    // upload was gated purely by "is googleDriveFolderId set" — there was
+    // no way to temporarily pause the integration without clearing (and
+    // later re-typing) the folder id. Defaults to true: an opt-*out*
+    // toggle, matching Windows' own default, since the folder-id-presence
+    // gate already prevents upload attempts on a fresh install with nothing
+    // configured yet.
+    public var isGoogleDriveEnabled: Bool {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -126,15 +145,21 @@ public final class AppSettings: Codable {
 
     // Phase 10.1a: Kommo CRM — subdomain (the part before `.kommo.com`) and
     // a long-lived API token, Windows parity source: AppSettings.cs's
-    // `KommoSubdomain`/`KommoApiToken`. Unlike Windows, there's no separate
-    // `IsKommoEnabled` flag here — same "presence of both required fields
-    // IS the enabled signal" convention `telegramConfigured`
-    // (CallRecordingCoordinator) already uses for Telegram, rather than a
-    // redundant boolean that could drift out of sync with them.
+    // `KommoSubdomain`/`KommoApiToken`.
     public var kommoSubdomain: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
     public var kommoApiToken: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
+    // Phase 12: Windows parity `ProfileViewModel.IsKommoEnabled` — a real
+    // opt-out toggle on top of subdomain/token presence. Supersedes the
+    // Phase 10.1a doc comment's "presence of both required fields IS the
+    // enabled signal" stance above (kept working correctly until now, but
+    // gave no way to pause the integration without clearing saved
+    // credentials) — see isGoogleDriveEnabled above for the same reasoning.
+    public var isKommoEnabled: Bool {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
@@ -164,31 +189,37 @@ public final class AppSettings: Codable {
         case managerName
         case telegramChatId
         case telegramTopicId
+        case isTelegramEnabled
         case googleDriveFolderId
         case googleDriveUserFolderId
+        case isGoogleDriveEnabled
         case isDriveConnected
         case isSetupComplete
         case isAutoStartEnabled
         case position
         case kommoSubdomain
         case kommoApiToken
+        case isKommoEnabled
         case isKommoConnected
         case workDayStartMinutes
         case workDayEndMinutes
     }
 
-    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
         self.managerName = managerName
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
+        self.isTelegramEnabled = isTelegramEnabled
         self.googleDriveFolderId = googleDriveFolderId
         self.googleDriveUserFolderId = googleDriveUserFolderId
+        self.isGoogleDriveEnabled = isGoogleDriveEnabled
         self.isDriveConnected = isDriveConnected
         self.isSetupComplete = isSetupComplete
         self.isAutoStartEnabled = isAutoStartEnabled
         self.position = position
         self.kommoSubdomain = kommoSubdomain
         self.kommoApiToken = kommoApiToken
+        self.isKommoEnabled = isKommoEnabled
         self.isKommoConnected = isKommoConnected
         self.workDayStartMinutes = workDayStartMinutes
         self.workDayEndMinutes = workDayEndMinutes
@@ -201,8 +232,13 @@ public final class AppSettings: Codable {
         managerName = try container.decodeIfPresent(String.self, forKey: .managerName) ?? NSUserName()
         telegramChatId = try container.decodeIfPresent(Int64.self, forKey: .telegramChatId)
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
+        // Missing key means this settings.json predates Phase 12 — default
+        // true (opt-out semantics: an existing install with a chat already
+        // configured was implicitly "enabled" before this flag existed).
+        isTelegramEnabled = try container.decodeIfPresent(Bool.self, forKey: .isTelegramEnabled) ?? true
         googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
         googleDriveUserFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveUserFolderId)
+        isGoogleDriveEnabled = try container.decodeIfPresent(Bool.self, forKey: .isGoogleDriveEnabled) ?? true
         isDriveConnected = try container.decodeIfPresent(Bool.self, forKey: .isDriveConnected) ?? false
         // Missing key means this settings.json predates Phase 7.7 — true
         // "fresh install" (the file was just bootstrapped, nothing
@@ -222,6 +258,7 @@ public final class AppSettings: Codable {
         position = try container.decodeIfPresent(String.self, forKey: .position) ?? "Менеджер"
         kommoSubdomain = try container.decodeIfPresent(String.self, forKey: .kommoSubdomain)
         kommoApiToken = try container.decodeIfPresent(String.self, forKey: .kommoApiToken)
+        isKommoEnabled = try container.decodeIfPresent(Bool.self, forKey: .isKommoEnabled) ?? true
         isKommoConnected = try container.decodeIfPresent(Bool.self, forKey: .isKommoConnected) ?? false
         workDayStartMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayStartMinutes) ?? 9 * 60
         workDayEndMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayEndMinutes) ?? 21 * 60
@@ -232,14 +269,17 @@ public final class AppSettings: Codable {
         try container.encode(managerName, forKey: .managerName)
         try container.encode(telegramChatId, forKey: .telegramChatId)
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
+        try container.encode(isTelegramEnabled, forKey: .isTelegramEnabled)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
         try container.encode(googleDriveUserFolderId, forKey: .googleDriveUserFolderId)
+        try container.encode(isGoogleDriveEnabled, forKey: .isGoogleDriveEnabled)
         try container.encode(isDriveConnected, forKey: .isDriveConnected)
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
         try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
         try container.encode(position, forKey: .position)
         try container.encode(kommoSubdomain, forKey: .kommoSubdomain)
         try container.encode(kommoApiToken, forKey: .kommoApiToken)
+        try container.encode(isKommoEnabled, forKey: .isKommoEnabled)
         try container.encode(isKommoConnected, forKey: .isKommoConnected)
         try container.encode(workDayStartMinutes, forKey: .workDayStartMinutes)
         try container.encode(workDayEndMinutes, forKey: .workDayEndMinutes)

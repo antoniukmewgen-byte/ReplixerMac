@@ -312,8 +312,11 @@ public actor CallRecordingCoordinator {
         // baked into this build, and telegramChatId set, or kommoApiToken
         // present) stands in for Windows' `_orchestrator.IsTelegramReady`/
         // Kommo-enabled checks — mac has no cheap synchronous "already
-        // logged in" check without attempting a real login, and no separate
-        // isKommoEnabled flag (see AppSettings.kommoApiToken's doc comment).
+        // logged in" check without attempting a real login. Deliberately
+        // still "configured" (not "configured AND isKommoEnabled") here —
+        // this only decides whether to prompt for a report form at all, not
+        // whether to actually deliver it; UploadOrchestrator.attemptKommo is
+        // what gates the real Kommo write on isKommoEnabled.
         // apiId/apiHash themselves no longer live in AppSettings at all —
         // like googleServiceAccountJson, they're a build-time AppSecrets
         // constant now (see AppSecrets.example.swift), so there's nothing

@@ -208,11 +208,15 @@ public enum KommoService {
     /// `TelegramUploadService`'s own edit outcome via `async let` without
     /// either leg's failure aborting the other.
     ///
-    /// No `IsKommoEnabled`-style short-circuit beyond the plain
-    /// token-presence check below — same deliberate divergence already
-    /// documented on this type (presence of the required settings *is* the
-    /// enabled signal on mac, see `AppSettings.kommoApiToken`'s doc
-    /// comment).
+    /// No `isKommoEnabled` short-circuit beyond the plain token-presence
+    /// check below — deliberately different from `addNote`'s call site
+    /// (`UploadOrchestrator.attemptKommo`, which does gate on
+    /// `isKommoEnabled` per Phase 12, see `AppSettings.kommoSubdomain`'s
+    /// doc comment). This edits a note that was already created while
+    /// Kommo *was* enabled — if the user pauses the integration afterward
+    /// but still edits the call report (`CallRecordingCoordinator
+    /// .editReport`), the already-posted note should stay in sync rather
+    /// than silently drift stale just because automation is paused now.
     public static func editNote(leadUrl: String, noteId: Int64, noteText: String, callType: String? = nil) async -> String? {
         guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else {
             return "Kommo: інтеграція вимкнена"
