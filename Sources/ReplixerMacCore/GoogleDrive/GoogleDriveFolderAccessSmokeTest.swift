@@ -48,10 +48,8 @@ public enum GoogleDriveFolderAccessSmokeTest {
         let accessToken: String
         do {
             accessToken = try await GoogleServiceAccountAuth.fetchAccessToken()
-        } catch GoogleServiceAccountAuth.AuthError.missingSettings {
-            return .failure("У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleServiceAccountPath.")
-        } catch GoogleServiceAccountAuth.AuthError.fileNotFound(let path) {
-            return .failure("Файл service account не знайдено: \(path)")
+        } catch GoogleServiceAccountAuth.AuthError.missingSecret {
+            return .failure("AppSecrets.googleServiceAccountJson не заповнено в цій збірці.")
         } catch {
             return .failure("Не вдалося отримати access token: \(error)")
         }

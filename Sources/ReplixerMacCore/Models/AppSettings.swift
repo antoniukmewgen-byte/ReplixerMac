@@ -27,30 +27,29 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
-    // Phase 4: my.telegram.org app credentials, required by
-    // setTdlibParameters before TDLib will do anything. Unlike managerName,
-    // these have no sane default — nil until set. Public since Phase 7.6
-    // (ProfileView's Telegram section is the first real UI for these);
-    // TelegramAuthClient refuses to start login without both present.
-    public var telegramApiId: Int? {
-        didSet { AppSettings.store.scheduleSave(self) }
-    }
-    public var telegramApiHash: String? {
-        didSet { AppSettings.store.scheduleSave(self) }
-    }
+    // Phase 4, revised post-Phase-7.6: my.telegram.org app credentials,
+    // required by setTdlibParameters before TDLib will do anything. Now
+    // matches Windows exactly — `AppSecrets.telegramApiId`/`telegramApiHash`
+    // are build-time constants (see `TelegramAuthClient.login()`'s doc
+    // comment), not per-user settings, since a Telegram *application*
+    // registration is shared across every manager using this build, same
+    // "one shared credential, not one per user" reasoning as the Google
+    // service account above.
 
     // Phase 4.2: which chat (and, for forum-mode supergroups, which topic
     // within it) recordings get sent to. Windows' equivalent
     // (`AppSettings.TelegramChatId`/`TelegramTopicId`) is populated by
     // picking from a hardcoded `AppSecrets.TelegramChats` list in a setup
-    // wizard ComboBox (gated by the user's `Position`) — that picker is a
-    // later phase here (ProfileView's Phase 7.6 fields are plain numeric
-    // text entry, not a chat picker yet). Set telegramChatId to one of
+    // wizard ComboBox (gated by the user's `Position`) — `ProfileView`'s
+    // Telegram section now has the same picker (over `AppSecrets
+    // .telegramChats`, filtered via `PositionPolicy.filteredTelegramChats`),
+    // which writes here on selection. These two properties still hold
     // TDLib's own chat ids (note these are NOT the same integers as
     // Windows' AppSecrets.cs — TDLib prefixes supergroup/channel ids with
-    // "-100"; use `--telegram-list-chats-smoke-test` to read off the real
-    // value for a given chat name). telegramTopicId is Int (not Int64) to
-    // match TDLib's `MessageTopicForum.forumTopicId: Int`.
+    // "-100"; `--telegram-list-chats-smoke-test` is what reads off the real
+    // value for a given chat name to hand-fill into `AppSecrets
+    // .telegramChats`). telegramTopicId is Int (not Int64) to match TDLib's
+    // `MessageTopicForum.forumTopicId: Int`.
     public var telegramChatId: Int64? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
@@ -58,21 +57,14 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
-    // Phase 5: Google Drive upload. Unlike Windows (which embeds the
-    // service-account JSON as a raw string in a build-time AppSecrets
-    // constant), here it's a *path* to a separate service-account JSON file
-    // on disk rather than the JSON pasted inline into settings.json —
-    // deliberate, to avoid repeating the telegramApiHash null-wipe incident
-    // (a multi-hundred-character PEM-embedded JSON string is extremely easy
-    // to mis-quote/escape by hand). Point this at wherever the
-    // Google-provided `service_account.json` was saved. Public since Phase
-    // 7.6 (ProfileView's Google Drive section, with a file picker for this).
-    public var googleServiceAccountPath: String? {
-        didSet { AppSettings.store.scheduleSave(self) }
-    }
-    // Destination Drive folder id (the part of the folder's URL after
-    // `folders/`) recordings get uploaded into. Public since Phase 7.6, same
-    // as googleServiceAccountPath above.
+    // Phase 5, revised post-Phase-7.6: Google Drive upload. Now matches
+    // Windows exactly — the service-account JSON itself is a build-time
+    // constant (`AppSecrets.googleServiceAccountJson`, see
+    // `GoogleServiceAccountAuth`'s doc comment), not a per-user setting, so
+    // there's no path/credential field here at all anymore. Destination
+    // Drive folder id (the part of the folder's URL after `folders/`) is
+    // the only Drive-related thing left for the user to configure. Public
+    // since Phase 7.6 (ProfileView's Google Drive section).
     public var googleDriveFolderId: String? {
         didSet { AppSettings.store.scheduleSave(self) }
     }
@@ -142,11 +134,8 @@ public final class AppSettings: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case managerName
-        case telegramApiId
-        case telegramApiHash
         case telegramChatId
         case telegramTopicId
-        case googleServiceAccountPath
         case googleDriveFolderId
         case isSetupComplete
         case isAutoStartEnabled
@@ -157,13 +146,10 @@ public final class AppSettings: Codable {
         case workDayEndMinutes
     }
 
-    private init(managerName: String, telegramApiId: Int? = nil, telegramApiHash: String? = nil, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleServiceAccountPath: String? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, googleDriveFolderId: String? = nil, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
         self.managerName = managerName
-        self.telegramApiId = telegramApiId
-        self.telegramApiHash = telegramApiHash
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
-        self.googleServiceAccountPath = googleServiceAccountPath
         self.googleDriveFolderId = googleDriveFolderId
         self.isSetupComplete = isSetupComplete
         self.isAutoStartEnabled = isAutoStartEnabled
@@ -179,20 +165,17 @@ public final class AppSettings: Codable {
         // decodeIfPresent (not decode) so adding a new field later can't
         // break loading an older settings.json that predates it.
         managerName = try container.decodeIfPresent(String.self, forKey: .managerName) ?? NSUserName()
-        telegramApiId = try container.decodeIfPresent(Int.self, forKey: .telegramApiId)
-        telegramApiHash = try container.decodeIfPresent(String.self, forKey: .telegramApiHash)
         telegramChatId = try container.decodeIfPresent(Int64.self, forKey: .telegramChatId)
         telegramTopicId = try container.decodeIfPresent(Int.self, forKey: .telegramTopicId)
-        googleServiceAccountPath = try container.decodeIfPresent(String.self, forKey: .googleServiceAccountPath)
         googleDriveFolderId = try container.decodeIfPresent(String.self, forKey: .googleDriveFolderId)
         // Missing key means this settings.json predates Phase 7.7 — true
         // "fresh install" (the file was just bootstrapped, nothing
         // configured yet) should still show the wizard, but an existing
-        // dev/test install that already has Telegram or Drive wired up
+        // dev/test install that already has Telegram chat or Drive wired up
         // clearly already went through informal "setup"; don't make it
         // re-click through a welcome screen it has no memory of skipping.
         isSetupComplete = try container.decodeIfPresent(Bool.self, forKey: .isSetupComplete)
-            ?? (telegramApiId != nil || googleDriveFolderId != nil)
+            ?? (telegramChatId != nil || googleDriveFolderId != nil)
         // Missing key means this settings.json predates Phase 8.2 — default
         // to false (not to whatever SMAppService.mainApp.status happens to
         // report) since a decode is plain data loading, not the place to
@@ -210,11 +193,8 @@ public final class AppSettings: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(managerName, forKey: .managerName)
-        try container.encode(telegramApiId, forKey: .telegramApiId)
-        try container.encode(telegramApiHash, forKey: .telegramApiHash)
         try container.encode(telegramChatId, forKey: .telegramChatId)
         try container.encode(telegramTopicId, forKey: .telegramTopicId)
-        try container.encode(googleServiceAccountPath, forKey: .googleServiceAccountPath)
         try container.encode(googleDriveFolderId, forKey: .googleDriveFolderId)
         try container.encode(isSetupComplete, forKey: .isSetupComplete)
         try container.encode(isAutoStartEnabled, forKey: .isAutoStartEnabled)
@@ -243,7 +223,7 @@ public final class AppSettings: Codable {
             // Do NOT fall back to bootstrapping defaults here — that would
             // immediately saveNow() a fresh all-nil AppSettings over the
             // existing file, silently destroying whatever was already in
-            // it (managerName, telegramApiId/Hash, etc.) just because one
+            // it (managerName, telegramChatId, etc.) just because one
             // hand-edited field had a typo. Fail loud instead: print
             // exactly what didn't parse and stop, so the JSON can be fixed
             // by hand without losing anything.

@@ -14,15 +14,21 @@ import Security
 ///   3. Exchange the signed JWT for a short-lived OAuth access token at
 ///      Google's token endpoint.
 ///
-/// Credentials come from `AppSettings.shared.googleServiceAccountPath` — a
-/// *path* to a separate JSON file rather than the JSON pasted inline into
-/// settings.json, deliberately, to avoid repeating the telegramApiHash
-/// null-wipe incident (a multi-hundred-character PEM-embedded JSON string
-/// is extremely easy to mis-quote/escape by hand).
+/// Credentials come from `AppSecrets.googleServiceAccountJson` — a
+/// build-time-baked JSON string constant, not a file the user picks at
+/// runtime. This is a deliberate switch to match Windows' model exactly
+/// (`AppSecrets.GoogleServiceAccountJson`, populated from a
+/// `GOOGLE_CREDENTIALS_JSON` CI secret): the service account is shared
+/// across every user of a given build, not something each manager brings
+/// their own copy of, so there's nothing for a per-user file picker to
+/// usefully do. See `AppSecrets.example.swift` for the git-ignored-file
+/// convention this reads from.
 enum GoogleServiceAccountAuth {
     enum AuthError: Swift.Error {
-        case missingSettings
-        case fileNotFound(path: String)
+        /// `AppSecrets.googleServiceAccountJson` is empty — the build
+        /// wasn't given a real service account (e.g. a local dev build
+        /// that never filled in `AppSecrets.swift`).
+        case missingSecret
         case invalidServiceAccountJSON
         case invalidPrivateKeyPEM
         case signingFailed(String)
@@ -49,19 +55,17 @@ enum GoogleServiceAccountAuth {
         }
     }
 
-    /// Reads `AppSettings.shared.googleServiceAccountPath`, builds+signs a
-    /// JWT, and exchanges it for an OAuth access token good for Drive API
-    /// calls (scope: `drive`, matching Windows'
-    /// `DriveService.Scope.Drive`). Returns the raw bearer token string —
-    /// no expiry-tracking/reuse yet, each call just fetches a fresh one;
-    /// revisit with caching in Step 5.2 if repeated calls in quick
-    /// succession turn out to matter.
+    /// Reads `AppSecrets.googleServiceAccountJson`, builds+signs a JWT, and
+    /// exchanges it for an OAuth access token good for Drive API calls
+    /// (scope: `drive`, matching Windows' `DriveService.Scope.Drive`).
+    /// Returns the raw bearer token string — no expiry-tracking/reuse yet,
+    /// each call just fetches a fresh one; revisit with caching in Step 5.2
+    /// if repeated calls in quick succession turn out to matter.
     static func fetchAccessToken() async throws -> String {
-        guard let path = AppSettings.shared.googleServiceAccountPath else {
-            throw AuthError.missingSettings
-        }
-        guard let data = FileManager.default.contents(atPath: path) else {
-            throw AuthError.fileNotFound(path: path)
+        let json = AppSecrets.googleServiceAccountJson
+        guard !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let data = json.data(using: .utf8) else {
+            throw AuthError.missingSecret
         }
         let account: ServiceAccount
         do {

@@ -36,7 +36,16 @@ let package = Package(
                 .product(name: "TDLibKit", package: "TDLibKit"),
                 .product(name: "PhoneNumberKit", package: "PhoneNumberKit")
             ],
-            path: "Sources/ReplixerMacCore"
+            path: "Sources/ReplixerMacCore",
+            // AppSecrets.example.swift is a tracked doc-only template (see
+            // its own header comment) that happens to declare the same
+            // `enum AppSecrets` shape as the git-ignored real AppSecrets
+            // .swift sitting right next to it — without this exclude,
+            // SwiftPM's recursive `path:` source scan compiles BOTH,
+            // producing a duplicate `AppSecrets` declaration and "ambiguous
+            // use of telegramApiId/telegramApiHash/googleServiceAccountJson"
+            // at every call site. Only the real file should ever build.
+            exclude: ["GoogleDrive/AppSecrets.example.swift"]
         ),
         // CLI entry point / smoke-test harness — now just main.swift, with
         // all actual logic living in ReplixerMacCore.

@@ -84,12 +84,15 @@ public final class TelegramAuthClient {
     /// Starts the login flow (or, if a session already exists on disk,
     /// resumes it silently) and suspends until `authorizationStateReady` is
     /// reached. Throws `TelegramAuthError.missingCredentials` if
-    /// `AppSettings` doesn't have both `telegramApiId`/`telegramApiHash`
-    /// set yet (no UI for these until Phase 7 — see AppSettings.swift), or
+    /// `AppSecrets.telegramApiId`/`telegramApiHash` haven't been baked into
+    /// this build (`AppSecrets.example.swift`'s placeholder `0`/`""` — see
+    /// its doc comment), same "build-time constant, not a per-user setting"
+    /// treatment as `AppSecrets.googleServiceAccountJson`. Otherwise
     /// rethrows whatever TDLib call failed along the way.
     public func login() async throws {
-        guard let apiId = AppSettings.shared.telegramApiId,
-              let apiHash = AppSettings.shared.telegramApiHash else {
+        let apiId = AppSecrets.telegramApiId
+        let apiHash = AppSecrets.telegramApiHash
+        guard apiId != 0, !apiHash.isEmpty else {
             throw TelegramAuthError.missingCredentials
         }
 

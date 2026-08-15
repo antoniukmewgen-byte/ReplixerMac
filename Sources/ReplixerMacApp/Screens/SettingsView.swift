@@ -16,11 +16,14 @@ import ReplixerMacCore
 /// so that one stays cut for now, same don't-add-a-field-before-the-phase-
 /// that-uses-it stance.
 ///
-/// Telegram/Google Drive credentials (`telegramApiId/Hash`, `telegramChatId`
-/// /`TopicId`, `googleServiceAccountPath`, `googleDriveFolderId`) stay
-/// hand-edit-JSON-only per `AppSettings`'s existing policy — their own UI is
-/// Phase 4/5 scope, not this screen. Revealing the settings file in Finder
-/// keeps that path discoverable without a picker.
+/// Telegram's `telegramChatId`/`TopicId` and Google Drive's
+/// `googleDriveFolderId` get their own UI on `ProfileView` (Phase 7.6), not
+/// this screen. Revealing the settings file in Finder keeps the raw JSON
+/// discoverable without a picker for anything not exposed there. (Telegram's
+/// `apiId`/`apiHash` and Google Drive's service-account credential aren't
+/// settings at all anymore — they're build-time constants,
+/// `AppSecrets.telegramApiId`/`telegramApiHash`/`googleServiceAccountJson`,
+/// matching Windows.)
 struct SettingsView: View {
     // AppSettings is a plain class, not an ObservableObject — ReplixerMacCore
     // stays headless/SwiftUI-free by design (Phase 7 architecture split), so

@@ -44,4 +44,19 @@ public enum PositionPolicy {
             return true
         }
     }
+
+    /// Windows parity: `ProfileViewModel.FilteredTelegramChats`/
+    /// `SetupViewModel`'s identical inline duplicate of the same rule —
+    /// centralized here instead of copy-pasted per screen. Кваліфікатор's
+    /// quick-call role only ever reports into the one shared team chat;
+    /// every other role sees every other chat, but never that one (it isn't
+    /// a meaningful destination for a real per-manager call report).
+    private static let qualifierOnlyChatName = "Чат Kvalifikatory Team"
+
+    public static func filteredTelegramChats(_ chats: [TelegramChat], position: String?) -> [TelegramChat] {
+        if position == "Кваліфікатор" {
+            return chats.filter { $0.name == qualifierOnlyChatName }
+        }
+        return chats.filter { $0.name != qualifierOnlyChatName }
+    }
 }

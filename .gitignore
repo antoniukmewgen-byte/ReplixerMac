@@ -16,8 +16,7 @@ xcuserdata/
 # Support/ReplixerMac/{settings.json,recordings.json}), so these
 # shouldn't normally appear here at all — this is a safety net in case
 # someone copies a real settings.json or a Google service-account key
-# into the project folder for convenience while testing (e.g. pointing
-# googleServiceAccountPath at a file dropped next to Package.swift).
+# into the project folder for convenience while testing.
 settings.json
 recordings.json
 *.pem
@@ -25,3 +24,8 @@ recordings.json
 *service-account*.json
 *service_account*.json
 *serviceaccount*.json
+
+# Build-time secrets baked into the binary — Windows-parity
+# AppSecrets.cs/AppSecrets.example.cs pattern (see AppSecrets.example.swift
+# for the tracked template). Real values never get committed.
+Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift

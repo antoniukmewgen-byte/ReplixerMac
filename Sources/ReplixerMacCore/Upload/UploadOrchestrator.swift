@@ -170,9 +170,11 @@ enum UploadOrchestrator {
     /// same opt-in-automation reasoning `CallRecordingCoordinator` used
     /// before this refactor.
     private static func attemptGoogleDrive(filePath: String) async -> (String?, Bool) {
-        guard AppSettings.shared.googleServiceAccountPath != nil,
-              AppSettings.shared.googleDriveFolderId != nil else {
-            print("[UploadOrchestrator] ℹ️ googleServiceAccountPath/googleDriveFolderId не налаштовано — пропускаю Google Drive.")
+        // AppSecrets.googleServiceAccountJson is a build-time constant (see
+        // GoogleServiceAccountAuth's doc comment), not a per-user setting,
+        // so googleDriveFolderId is the only thing left to gate on here.
+        guard AppSettings.shared.googleDriveFolderId != nil else {
+            print("[UploadOrchestrator] ℹ️ googleDriveFolderId не налаштовано — пропускаю Google Drive.")
             return (nil, false)
         }
         do {

@@ -1,6 +1,4 @@
 import SwiftUI
-import AppKit
-import UniformTypeIdentifiers
 import ReplixerMacCore
 
 /// Phase 7.6 — Windows parity source: `ProfileViewModel` (486 lines), scoped
@@ -12,9 +10,14 @@ import ReplixerMacCore
 ///
 /// Same local-@State-mirror-of-a-plain-class pattern as SettingsView (mac
 /// `AppSettings` isn't an `ObservableObject`, ReplixerMacCore stays
-/// SwiftUI-free by design), extended here to numeric fields
-/// (`telegramApiId`/`telegramChatId`/`telegramTopicId`) that need
-/// String<->Int bridging since SwiftUI text entry is string-based.
+/// SwiftUI-free by design). Telegram's destination is a `Picker` over
+/// `AppSecrets.telegramChats` (see `selectedTelegramChat` below) rather
+/// than raw chat-id/topic-id text entry — matching Windows'
+/// `FilteredTelegramChats`/`SelectedTelegramChat` `ComboBox`.
+/// `telegramApiId`/`telegramApiHash` moved out of this screen entirely —
+/// like `googleServiceAccountJson`, they're now a build-time `AppSecrets`
+/// constant, not a per-user setting (see `AppSecrets.example.swift`), so
+/// there's nothing here left to edit.
 ///
 /// **Deliberate scope cut vs. Windows:** Windows' Profile screen drives a
 /// full interactive phone+code+2FA Telegram login right from this screen
@@ -34,14 +37,24 @@ import ReplixerMacCore
 /// scope for this sub-phase.
 struct ProfileView: View {
     @State private var driveFolderId: String = AppSettings.shared.googleDriveFolderId ?? ""
-    @State private var serviceAccountPath: String = AppSettings.shared.googleServiceAccountPath ?? ""
     @State private var isTestingDriveConnection = false
     @State private var driveTestResult: GoogleDriveFolderAccessSmokeTest.CheckOutcome?
 
-    @State private var telegramApiId: String = AppSettings.shared.telegramApiId.map(String.init) ?? ""
-    @State private var telegramApiHash: String = AppSettings.shared.telegramApiHash ?? ""
-    @State private var telegramChatId: String = AppSettings.shared.telegramChatId.map(String.init) ?? ""
-    @State private var telegramTopicId: String = AppSettings.shared.telegramTopicId.map(String.init) ?? ""
+    // Windows parity: `ProfileViewModel.FilteredTelegramChats`/
+    // `SelectedTelegramChat` — a picker over `AppSecrets.telegramChats`
+    // (filtered by role via `PositionPolicy.filteredTelegramChats`) instead
+    // of raw chat-id/topic-id text entry. Position doesn't change while
+    // this view is on screen (it's a separate sidebar destination from
+    // Settings, never rendered simultaneously), so computing the filtered
+    // list once here — rather than reactively, like Windows' cross-VM
+    // property-changed plumbing — is enough.
+    private let filteredTelegramChats = ProfileView.computeFilteredTelegramChats()
+    // Initial selection mirrors Windows' constructor logic: Кваліфікатор
+    // always lands on the one chat it's allowed to see; every other role
+    // matches whatever chat/topic id pair is already saved (nil if none
+    // saved yet, or if the saved id no longer matches any configured
+    // chat — e.g. `AppSecrets.telegramChats` hasn't been filled in).
+    @State private var selectedTelegramChat: TelegramChat? = ProfileView.initialSelectedTelegramChat()
     // Snapshotted on appear, not recomputed per-render — it's a filesystem
     // stat, not a SwiftUI-observable value, and this screen has no signal
     // that would tell it to refresh mid-session anyway (no UI here ever
@@ -55,9 +68,8 @@ struct ProfileView: View {
     @State private var kommoTestResult: KommoService.CheckOutcome?
 
     // Phase 10.1c fix, extended after the "isReadyToAutoSave" attempt below
-    // turned out not to be enough: `googleServiceAccountPath`'s doc comment
-    // (AppSettings.swift) references a prior "telegramApiHash null-wipe"
-    // where a `SecureField`'s `.onChange` fired with an empty string it
+    // turned out not to be enough: a prior "telegramApiHash null-wipe"
+    // incident where a `SecureField`'s `.onChange` fired with an empty string it
     // never actually displayed, and the save function treated "empty" as
     // "user wants to clear this setting", silently nil-ing out a real saved
     // value. The `isReadyToAutoSave` guard below (ignore only the *first*
@@ -73,15 +85,14 @@ struct ProfileView: View {
     // real token days after it was actually typed.
     //
     // Fix: `onChange` on a `SecureField` never saves an empty value anymore
-    // (see `saveKommoApiToken`/`saveTelegramApiHash` below) — a phantom
+    // (see `saveKommoApiToken` below) — a phantom
     // reset is now just ignored, no write happens. Clearing the setting on
     // purpose still works via `onSubmit` (pressing Return on an emptied
     // field is an explicit user gesture, not something AppKit fires on its
-    // own) or the "Очистити" button next to each field, which is the more
-    // discoverable affordance for a password-style control anyway. Plain
-    // `TextField`s (kommoSubdomain, the Telegram numeric fields, Drive
-    // folder id) aren't known to have this AppKit-level teardown/rebuild
-    // quirk, so they keep the simpler "empty onChange clears it" behavior.
+    // own) — no separate "Очистити" button exists for this field. Plain
+    // `TextField`s (kommoSubdomain, Drive folder id) aren't known to have
+    // this AppKit-level teardown/rebuild quirk, so they keep the simpler
+    // "empty onChange clears it" behavior.
     @State private var isReadyToAutoSave = false
 
     var body: some View {
@@ -97,18 +108,6 @@ struct ProfileView: View {
                         guard isReadyToAutoSave else { return }
                         saveDriveFolderId()
                     }
-
-                LabeledContent("Service account") {
-                    HStack(spacing: 8) {
-                        Text(serviceAccountPath.isEmpty ? "Не обрано" : serviceAccountPath)
-                            .foregroundStyle(serviceAccountPath.isEmpty ? .secondary : .primary)
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button("Обрати файл...", action: pickServiceAccountFile)
-                    }
-                }
 
                 Button {
                     testDriveConnection()
@@ -136,39 +135,23 @@ struct ProfileView: View {
             }
 
             Section {
-                TextField("API ID", text: $telegramApiId)
-                    .onSubmit(saveTelegramApiId)
-                    .onChange(of: telegramApiId) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveTelegramApiId()
+                Picker("Чат", selection: $selectedTelegramChat) {
+                    Text("Оберіть чат").tag(nil as TelegramChat?)
+                    ForEach(filteredTelegramChats) { chat in
+                        Text(chat.name).tag(chat as TelegramChat?)
                     }
-                HStack(spacing: 8) {
-                    SecureField("API Hash", text: $telegramApiHash)
-                        .onSubmit(saveTelegramApiHash)
-                        .onChange(of: telegramApiHash) { _, newValue in
-                            guard isReadyToAutoSave else { return }
-                            // See isReadyToAutoSave's doc comment above — a
-                            // SecureField's onChange never treats an empty
-                            // value as an intentional clear; only onSubmit
-                            // (explicit Return) or the button below do that.
-                            guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                            saveTelegramApiHash()
-                        }
-                    Button("Очистити", role: .destructive, action: clearTelegramApiHash)
-                        .disabled(telegramApiHash.isEmpty)
                 }
-                TextField("ID чату", text: $telegramChatId)
-                    .onSubmit(saveTelegramChatId)
-                    .onChange(of: telegramChatId) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveTelegramChatId()
-                    }
-                TextField("ID теми (опційно)", text: $telegramTopicId)
-                    .onSubmit(saveTelegramTopicId)
-                    .onChange(of: telegramTopicId) { _, _ in
-                        guard isReadyToAutoSave else { return }
-                        saveTelegramTopicId()
-                    }
+                .onChange(of: selectedTelegramChat) { _, newValue in
+                    guard let newValue else { return }
+                    AppSettings.shared.telegramChatId = newValue.chatId
+                    AppSettings.shared.telegramTopicId = newValue.topicId
+                }
+
+                if filteredTelegramChats.isEmpty {
+                    Text("Список чатів порожній — заповніть `AppSecrets.telegramChats` реальними TDLib id (див. `--telegram-list-chats-smoke-test`).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 if telegramHasSavedSession {
                     Label("Сесія збережена на диску", systemImage: "checkmark.circle.fill")
@@ -191,20 +174,20 @@ struct ProfileView: View {
                         guard isReadyToAutoSave else { return }
                         saveKommoSubdomain()
                     }
-                HStack(spacing: 8) {
-                    SecureField("API токен", text: $kommoApiToken)
-                        .onSubmit(saveKommoApiToken)
-                        .onChange(of: kommoApiToken) { _, newValue in
-                            guard isReadyToAutoSave else { return }
-                            // Same reasoning as telegramApiHash's onChange
-                            // above — never let a phantom empty fire wipe a
-                            // real saved token.
-                            guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                            saveKommoApiToken()
-                        }
-                    Button("Очистити", role: .destructive, action: clearKommoApiToken)
-                        .disabled(kommoApiToken.isEmpty)
-                }
+                // No "Очистити" button here (unlike the old telegramApiHash
+                // field this replaced) — pressing Return on an emptied
+                // field (onSubmit) is still an explicit, discoverable way
+                // to clear a saved token on purpose; see saveKommoApiToken.
+                SecureField("API токен", text: $kommoApiToken)
+                    .onSubmit(saveKommoApiToken)
+                    .onChange(of: kommoApiToken) { _, newValue in
+                        guard isReadyToAutoSave else { return }
+                        // Same reasoning as telegramApiHash's onChange
+                        // above — never let a phantom empty fire wipe a
+                        // real saved token.
+                        guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        saveKommoApiToken()
+                    }
 
                 Button {
                     testKommoConnection()
@@ -256,17 +239,6 @@ struct ProfileView: View {
         AppSettings.shared.googleDriveFolderId = trimmed.isEmpty ? nil : trimmed
     }
 
-    private func pickServiceAccountFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        serviceAccountPath = url.path
-        AppSettings.shared.googleServiceAccountPath = url.path
-    }
-
     private func testDriveConnection() {
         isTestingDriveConnection = true
         driveTestResult = nil
@@ -277,53 +249,24 @@ struct ProfileView: View {
         }
     }
 
-    // Empty clears the setting (unlike SettingsView's managerName, empty is
-    // a valid state here — these fields start out unset on every fresh
-    // install). Non-empty-but-unparseable input is silently ignored rather
-    // than saved, same "don't save garbage, don't explain why here either"
-    // stance as managerName's whitespace-only rejection.
-    private func saveTelegramApiId() {
-        let trimmed = telegramApiId.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            AppSettings.shared.telegramApiId = nil
-        } else if let value = Int(trimmed) {
-            AppSettings.shared.telegramApiId = value
+    // Static (not instance methods) so they're safe to call from a
+    // property initializer above, before `self` exists — see
+    // selectedTelegramChat's doc comment.
+    private static func computeFilteredTelegramChats() -> [TelegramChat] {
+        PositionPolicy.filteredTelegramChats(AppSecrets.telegramChats, position: AppSettings.shared.position)
+    }
+
+    private static func initialSelectedTelegramChat() -> TelegramChat? {
+        let chats = computeFilteredTelegramChats()
+        if AppSettings.shared.position == "Кваліфікатор" {
+            return chats.first
+        }
+        return chats.first {
+            $0.chatId == AppSettings.shared.telegramChatId && $0.topicId == AppSettings.shared.telegramTopicId
         }
     }
 
-    private func saveTelegramApiHash() {
-        let trimmed = telegramApiHash.trimmingCharacters(in: .whitespacesAndNewlines)
-        AppSettings.shared.telegramApiHash = trimmed.isEmpty ? nil : trimmed
-    }
-
-    // Explicit-clear path for the "Очистити" button next to the SecureField
-    // — the one place besides onSubmit that's allowed to persist an empty
-    // value, since a button tap (unlike onChange) can never be a phantom
-    // AppKit-internal refire.
-    private func clearTelegramApiHash() {
-        telegramApiHash = ""
-        AppSettings.shared.telegramApiHash = nil
-    }
-
-    private func saveTelegramChatId() {
-        let trimmed = telegramChatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            AppSettings.shared.telegramChatId = nil
-        } else if let value = Int64(trimmed) {
-            AppSettings.shared.telegramChatId = value
-        }
-    }
-
-    private func saveTelegramTopicId() {
-        let trimmed = telegramTopicId.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            AppSettings.shared.telegramTopicId = nil
-        } else if let value = Int(trimmed) {
-            AppSettings.shared.telegramTopicId = value
-        }
-    }
-
-    // Same "empty clears the setting" stance as the Telegram fields above —
+    // Same "empty clears the setting" stance as the Kommo field below —
     // both start out unset on every fresh install.
     private func saveKommoSubdomain() {
         let trimmed = kommoSubdomain.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -333,12 +276,6 @@ struct ProfileView: View {
     private func saveKommoApiToken() {
         let trimmed = kommoApiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         AppSettings.shared.kommoApiToken = trimmed.isEmpty ? nil : trimmed
-    }
-
-    // See clearTelegramApiHash's doc comment above — same reasoning.
-    private func clearKommoApiToken() {
-        kommoApiToken = ""
-        AppSettings.shared.kommoApiToken = nil
     }
 
     private func testKommoConnection() {

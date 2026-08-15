@@ -18,10 +18,8 @@ public enum GoogleDriveUploadSmokeTest {
             print("[\(timestamp())] ✅ Файл завантажено — \(link)")
         } catch GoogleDriveUploadService.UploadError.missingFolderId {
             print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleDriveFolderId.")
-        } catch GoogleServiceAccountAuth.AuthError.missingSettings {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнено googleServiceAccountPath.")
-        } catch GoogleServiceAccountAuth.AuthError.fileNotFound(let path) {
-            print("[\(timestamp())] ❌ Файл service account не знайдено: \(path)")
+        } catch GoogleServiceAccountAuth.AuthError.missingSecret {
+            print("[\(timestamp())] ❌ AppSecrets.googleServiceAccountJson не заповнено в цій збірці.")
         } catch {
             print("[\(timestamp())] ❌ Не вдалося завантажити файл: \(error)")
         }

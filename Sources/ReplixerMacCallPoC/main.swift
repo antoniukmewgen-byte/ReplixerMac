@@ -92,7 +92,7 @@ if CommandLine.arguments.contains("--telegram-login-smoke-test") {
             try await telegramAuthClient.login()
             print("[\(timestamp())] ✅ Смоук-тест завершено — авторизація Telegram пройшла успішно.")
         } catch TelegramAuthError.missingCredentials {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнені telegramApiId/telegramApiHash — додай їх (значення з https://my.telegram.org) і спробуй знову.")
+            print("[\(timestamp())] ❌ AppSecrets.telegramApiId/telegramApiHash не заповнені в цій збірці — додай їх (значення з https://my.telegram.org) в Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift і спробуй знову.")
         } catch {
             print("[\(timestamp())] ❌ Смоук-тест провалився: \(error)")
         }

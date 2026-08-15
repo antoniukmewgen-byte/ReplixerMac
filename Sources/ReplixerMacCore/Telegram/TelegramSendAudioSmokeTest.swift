@@ -17,7 +17,7 @@ public enum TelegramSendAudioSmokeTest {
         do {
             try await authClient.login()
         } catch TelegramAuthError.missingCredentials {
-            print("[\(timestamp())] ❌ У налаштуваннях (\(AppSettings.store.url.path)) не заповнені telegramApiId/telegramApiHash — додай їх (значення з https://my.telegram.org) і спробуй знову.")
+            print("[\(timestamp())] ❌ AppSecrets.telegramApiId/telegramApiHash не заповнені в цій збірці — додай їх (значення з https://my.telegram.org) в Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift і спробуй знову.")
             return
         } catch {
             print("[\(timestamp())] ❌ Авторизація провалилась: \(error)")

@@ -307,14 +307,18 @@ public actor CallRecordingCoordinator {
         // since Phase 10.1a, Kommo (gated by nothing role-specific: every
         // position's canSubmit already requires crmUrl/note, so Kommo
         // applies uniformly, including Діагност — the one role
-        // isTelegramVisible excludes). "Configured" (apiId/apiHash/chatId
-        // all present, or kommoApiToken present) stands in for Windows'
-        // `_orchestrator.IsTelegramReady`/Kommo-enabled checks — mac has no
-        // cheap synchronous "already logged in" check without attempting a
-        // real login, and no separate isKommoEnabled flag (see
-        // AppSettings.kommoApiToken's doc comment).
-        let telegramConfigured = AppSettings.shared.telegramApiId != nil
-            && AppSettings.shared.telegramApiHash != nil
+        // isTelegramVisible excludes). "Configured" (AppSecrets.telegramApiId
+        // baked into this build, and telegramChatId set, or kommoApiToken
+        // present) stands in for Windows' `_orchestrator.IsTelegramReady`/
+        // Kommo-enabled checks — mac has no cheap synchronous "already
+        // logged in" check without attempting a real login, and no separate
+        // isKommoEnabled flag (see AppSettings.kommoApiToken's doc comment).
+        // apiId/apiHash themselves no longer live in AppSettings at all —
+        // like googleServiceAccountJson, they're a build-time AppSecrets
+        // constant now (see AppSecrets.example.swift), so there's nothing
+        // per-user left to check for them beyond "did this build get one".
+        let telegramConfigured = AppSecrets.telegramApiId != 0
+            && !AppSecrets.telegramApiHash.isEmpty
             && AppSettings.shared.telegramChatId != nil
         let position = AppSettings.shared.position
         let wantsTelegram = telegramConfigured && PositionPolicy.isTelegramVisible(position)
@@ -743,7 +747,7 @@ public actor CallRecordingCoordinator {
         do {
             try await newClient.login()
         } catch TelegramAuthError.missingCredentials {
-            print("[CallRecordingCoordinator] ℹ️ telegramApiId/telegramApiHash не налаштовані — пропускаю автоматичну відправку в Telegram.")
+            print("[CallRecordingCoordinator] ℹ️ AppSecrets.telegramApiId/telegramApiHash не налаштовані в цій збірці — пропускаю автоматичну відправку в Telegram.")
             return nil
         } catch {
             print("[CallRecordingCoordinator] ❌ авторизація Telegram провалилась: \(error)")
