@@ -1,0 +1,78 @@
+name: Build
+
+# Windows-parity secrets mechanism (mirrors Replixer's release.yml
+# "Restore AppSecrets.cs" / "Inject Google credentials" steps almost
+# exactly, PowerShell -> python3 since this runs on a macOS runner):
+#   - APPSECRETS_SWIFT   = base64 of the ENTIRE populated AppSecrets.swift
+#                          file (parity with Windows' APPSECRETS_CS).
+#   - GOOGLE_CREDENTIALS_JSON = raw service-account JSON, spliced into the
+#                          `googleServiceAccountJson` constant afterwards
+#                          (parity with Windows' GOOGLE_CREDENTIALS_JSON
+#                          step — same reasoning: embedding multi-line JSON
+#                          with quotes directly inside a base64 blob is
+#                          fragile, so it travels as its own secret and
+#                          gets string-spliced in as a separate step).
+# Both secrets live only as: (1) GitHub's encrypted secret store, (2)
+# transiently in this runner's ephemeral workspace during the job, (3)
+# baked into the compiled binary this job produces. They are never
+# committed, never printed (GitHub automatically masks any log line that
+# contains a registered secret's exact value), and this workflow does not
+# upload AppSecrets.swift itself or any artifact containing it — only the
+# already-decoded-then-recompiled binary would ever leave this job, and
+# this workflow doesn't even do that (see note below).
+#
+# Deliberately NOT a full release pipeline yet (packaging/signing/
+# publishing stays Scripts/release.sh, run by hand on the Mac that holds
+# Sparkle's private key in its login Keychain — see that script's header
+# comment for why: no paid Developer ID yet, and the Sparkle signing key
+# has no CI-portable equivalent set up). This workflow's only job is to
+# prove the real secrets + current source actually compile together, on
+# every push — the same "catch it in CI, not by hand on the one Mac"
+# value Windows gets, scoped down to what's safe/possible without an
+# Apple Developer ID.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore AppSecrets.swift
+        env:
+          APPSECRETS_SWIFT: ${{ secrets.APPSECRETS_SWIFT }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          data = base64.b64decode(os.environ["APPSECRETS_SWIFT"])
+          open("Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift", "wb").write(data)
+          PY
+
+      - name: Inject Google credentials into AppSecrets.swift
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          path = "Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift"
+          text = open(path, encoding="utf-8").read()
+          json_value = os.environ["GOOGLE_CREDENTIALS_JSON"]
+          escaped = json_value.replace("\\", "\\\\").replace('"', '\\"')
+          text, n = re.subn(
+              r'(static let googleServiceAccountJson = )"[^"]*"',
+              lambda m: m.group(1) + '"' + escaped + '"',
+              text, count=1,
+          )
+          if n != 1:
+              raise SystemExit("build.yml: could not find googleServiceAccountJson in AppSecrets.swift")
+          open(path, "w", encoding="utf-8").write(text)
+          PY
+
+      - name: swift build
+        run: swift build
