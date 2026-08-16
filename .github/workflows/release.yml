@@ -152,17 +152,17 @@ jobs:
           GATEKEEPER_NOTE="Якщо після оновлення застосунок не відкриється автоматично: Системні налаштування → Конфіденційність і безпека → прокрутіть вниз до попередження про ReplixerMac → «Все одно відкрити». Це одноразово для кожної версії (поки немає платного Apple Developer ID)."
           RELEASE_NOTES_HTML="<![CDATA[<p>Версія $VERSION.</p><p><b>$GATEKEEPER_NOTE</b></p>]]>"
           ITEM=$(cat <<EOF
-        <item>
-            <title>Версія $VERSION</title>
-            <pubDate>$PUB_DATE</pubDate>
-            <sparkle:version>$NEXT_BUILD</sparkle:version>
-            <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
-            <description>$RELEASE_NOTES_HTML</description>
-            <enclosure url="$DOWNLOAD_URL" sparkle:edSignature="$ED_SIGNATURE" length="$DMG_LENGTH" type="application/octet-stream" />
-        </item>
-EOF
-)
+          <item>
+              <title>Версія $VERSION</title>
+              <pubDate>$PUB_DATE</pubDate>
+              <sparkle:version>$NEXT_BUILD</sparkle:version>
+              <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+              <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+              <description>$RELEASE_NOTES_HTML</description>
+              <enclosure url="$DOWNLOAD_URL" sparkle:edSignature="$ED_SIGNATURE" length="$DMG_LENGTH" type="application/octet-stream" />
+          </item>
+          EOF
+          )
           MARKER="<!-- release.sh:insert-here"
           python3 - "appcast.xml" "$MARKER" "$ITEM" <<'PY'
           import sys
