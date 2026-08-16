@@ -62,6 +62,7 @@ swift build -c release --arch x86_64 --product ReplixerMacApp --package-path "$R
 echo "==> Assembling $APP_NAME.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Frameworks"
 cp "$REPO_DIR/Sources/ReplixerMacApp/Info.plist" "$APP_DIR/Contents/Info.plist"
 
 echo "==> lipo: merging arm64 + x86_64 into one universal binary"
@@ -73,7 +74,40 @@ lipo -info "$APP_DIR/Contents/MacOS/ReplixerMacApp"
 
 printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
 
-echo "==> Ad-hoc code signing"
+# Phase 9: Sparkle.xcframework is downloaded by SwiftPM under
+# .build/artifacts/ (a binaryTarget, resolved once per `swift build`, same
+# for both arch invocations above — not duplicated). Only the macOS slice's
+# .framework is copied in, matching the rpath Package.swift's linkerSettings
+# added (@executable_path/../Frameworks). `find` (rather than hardcoding the
+# exact "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" path) is
+# used because that slice-folder name isn't guaranteed stable across Sparkle
+# versions — only that it's a macOS slice.
+echo "==> Locating Sparkle.framework in SwiftPM artifacts"
+SPARKLE_FRAMEWORK="$(find "$REPO_DIR/.build/artifacts" -type d -path "*macos*/Sparkle.framework" -print -quit)"
+if [ -z "$SPARKLE_FRAMEWORK" ]; then
+    echo "!! Could not find Sparkle.framework under .build/artifacts — did 'swift build' resolve the Sparkle package dependency?" >&2
+    exit 1
+fi
+echo "    Found: $SPARKLE_FRAMEWORK"
+echo "==> Embedding Sparkle.framework into Contents/Frameworks"
+rm -rf "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+cp -R "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+
+echo "==> Code signing (ad-hoc — see header comment)"
+# Sign the leaf bundles Sparkle ships inside its framework (its own
+# Autoupdate.app relauncher + Installer.xpc/Downloader.xpc XPC services)
+# before the framework and outer app, innermost-out — the order `--deep`
+# alone doesn't reliably guarantee, and which Apple's own docs recommend for
+# anything beyond a single flat binary. Still ad-hoc (`--sign -`): fine for
+# same-Mac testing (Gatekeeper/quarantine don't apply to a locally-built,
+# never-downloaded app), but a real Developer ID identity + `--options
+# runtime` (hardened runtime) is required before this bundle can be
+# notarized — a hard requirement once Sparkle-fetched *updates* need to pass
+# Gatekeeper on OTHER Macs, not just run here. See Scripts/release.sh.
+find "$APP_DIR/Contents/Frameworks/Sparkle.framework" \
+    \( -name "*.app" -o -name "*.xpc" \) -maxdepth 4 \
+    -exec codesign --force --sign - {} \;
+codesign --force --sign - "$APP_DIR/Contents/Frameworks/Sparkle.framework"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "==> Done: $APP_DIR (universal: arm64 + x86_64)"

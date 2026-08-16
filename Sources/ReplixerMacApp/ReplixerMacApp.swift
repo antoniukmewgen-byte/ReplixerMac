@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Sparkle
 import ReplixerMacCore
 
 /// Owns the app's runtime side: activation, and — since Phase 7.5 — the
@@ -25,6 +26,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     // object is deallocated, so it needs a strong reference for the whole
     // app lifetime, same reasoning as `coordinator`/`monitor` above.
     private var statusItemController: StatusItemController?
+    // Phase 9: owns the update lifecycle (background checks per Info
+    // .plist's SUScheduledCheckInterval, the "Перевірити оновлення…" menu
+    // item's target, and the whole download/verify/relaunch flow when an
+    // update is found). `startingUpdater: true` matches Sparkle's own
+    // SwiftUI-app guidance — no separate `.startUpdater()` call needed.
+    // Held strongly for the app's lifetime for the same reason
+    // `statusItemController` is: nothing else keeps it alive.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Phase 11.2: publish the running app's coordinator instance for
@@ -46,7 +59,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
 
-        statusItemController = StatusItemController()
+        statusItemController = StatusItemController(updaterController: updaterController)
 
         // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
         // `.inprogress` file / dangling `.recording` history entry left by a

@@ -1,0 +1,35 @@
+<?xml version="1.0" standalone="yes"?>
+<!--
+  Phase 9 — Sparkle update feed. Hosted via GitHub Releases: this exact
+  file is re-uploaded (as an asset literally named "appcast.xml") to every
+  new GitHub Release Scripts/release.sh walks you through creating, and
+  Info.plist's SUFeedURL points at
+  https://github.com/antoniukmewgen-byte/ReplixerMac/releases/latest/download/appcast.xml
+  — GitHub's "latest" redirect always serves whatever asset with that exact
+  name is attached to the most recent published (non-draft/non-prerelease)
+  Release, so there's no separate web server or gh-pages branch involved.
+
+  Each release adds ONE new <item> below (newest first — Sparkle doesn't
+  strictly require ordering, but every real appcast in the wild does this,
+  and it's what makes skimming this file by hand actually useful). Do NOT
+  hand-edit the sparkle:edSignature/length values on an existing <item> —
+  they're a cryptographic signature over the exact bytes of that release's
+  .dmg; changing anything about the file after signing (even re-uploading
+  it) makes Sparkle refuse to install it, which is the whole point.
+
+  Windows parity: this is the mac equivalent of Replixer's version.json
+  (UpdateService.cs) + the GitHub Release it's attached to in release.yml —
+  same "tag push -> build -> publish a manifest + the update files together"
+  shape, just Sparkle's own XML format instead of a hand-rolled one.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>ReplixerMac Updates</title>
+        <link>https://github.com/antoniukmewgen-byte/ReplixerMac/releases/latest/download/appcast.xml</link>
+        <description>Оновлення ReplixerMac.</description>
+        <language>uk</language>
+        <!-- release.sh:insert-here (do not remove this exact comment —
+             Scripts/release.sh looks for it verbatim and inserts each new
+             <item> immediately after it, so items stay newest-first). -->
+    </channel>
+</rss>

@@ -23,7 +23,17 @@ let package = Package(
         // the now-archived marmelroy/PhoneNumberKit (moved orgs, same
         // library) — macOS 10.15+/Swift 5.9, well within this package's
         // 14.2 floor.
-        .package(url: "https://github.com/PhoneNumberKit/PhoneNumberKit", from: "5.0.0")
+        .package(url: "https://github.com/PhoneNumberKit/PhoneNumberKit", from: "5.0.0"),
+        // Phase 9: auto-update framework (Windows parity: UpdateService.cs's
+        // hand-rolled GitHub-manifest updater — Sparkle is the standard
+        // off-the-shelf equivalent on macOS). SPM only vends the prebuilt
+        // `Sparkle` library product (a binary xcframework target) — the
+        // `bin/generate_keys`/`sign_update`/`generate_appcast` command-line
+        // tools it also ships are NOT part of this package dependency; those
+        // only come from manually downloading a `Sparkle-X.Y.Z.tar.xz` from
+        // https://github.com/sparkle-project/Sparkle/releases (see
+        // Scripts/release.sh's header comment).
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4")
     ],
     targets: [
         // Phase 7.1: library target holding all real logic (audio capture,
@@ -54,11 +64,15 @@ let package = Package(
             dependencies: ["ReplixerMacCore"],
             path: "Sources/ReplixerMacCallPoC"
         ),
-        // Phase 7.1 scaffolding: minimal SwiftUI app shell, not yet wired up
-        // to ReplixerMacCore's functionality.
+        // The real SwiftUI app — home/recordings/settings/profile screens
+        // plus (Phase 7.5+) the live call-detection/recording pipeline
+        // itself, wired up in ReplixerMacApp.swift's AppDelegate.
         .executableTarget(
             name: "ReplixerMacApp",
-            dependencies: ["ReplixerMacCore"],
+            dependencies: [
+                "ReplixerMacCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/ReplixerMacApp",
             // Phase 8.3: embeds Info.plist directly into the executable via
             // a `__TEXT,__info_plist` Mach-O section — the standard trick
@@ -77,7 +91,18 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/ReplixerMacApp/Info.plist"
+                    "-Xlinker", "Sources/ReplixerMacApp/Info.plist",
+                    // Phase 9: Sparkle.framework is embedded into
+                    // Contents/Frameworks by Scripts/build-app-bundle.sh (SPM
+                    // has no "Copy Files" build phase to do this
+                    // automatically, unlike an Xcode project) — the binary
+                    // needs its own rpath entry to find it there at runtime.
+                    // Harmless for the raw Xcode-debug executable case (no
+                    // Frameworks dir exists yet then; the app just can't
+                    // actually load Sparkle until launched from a real
+                    // .app bundle built by that script).
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "@executable_path/../Frameworks"
                 ])
             ]
         )

@@ -48,5 +48,35 @@
     <string>ReplixerMac потребує доступ до мікрофона, щоб записувати твою сторону розмови під час дзвінків.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+
+    <!-- Phase 9 — Sparkle auto-update. GitHub-Releases-hosted feed: this
+         exact URL pattern (`/releases/latest/download/<asset>`) redirects to
+         whatever asset named `appcast.xml` is attached to the most recent
+         *published* (non-draft/non-prerelease) GitHub Release — no separate
+         web server or gh-pages branch needed, matching Windows'
+         raw.githubusercontent.com-manifest approach in spirit. Scripts/
+         release.sh re-uploads an accumulating appcast.xml (one <item> per
+         released version, newest first) to every new Release it creates. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/antoniukmewgen-byte/ReplixerMac/releases/latest/download/appcast.xml</string>
+    <!-- REQUIRED before Sparkle will do anything but log an error — run
+         `bin/generate_keys` from a downloaded Sparkle-X.Y.Z.tar.xz release
+         (see Package.swift's Sparkle dependency comment) ONCE, on the Mac
+         that will sign releases; it prints a public key and stores the
+         matching private key in that Mac's login Keychain. Paste the
+         printed public key here. Leaving this placeholder in place makes
+         Sparkle refuse to install any update (by design — an unset/invalid
+         SUPublicEDKey means "no one has proven any update is authentic
+         yet"), so this is safe to ship as-is until the key exists. -->
+    <key>SUPublicEDKey</key>
+    <string>ked7JFQISRML+PIpm18Xrmeb5oBoQhovF//DPhD5N7M=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <!-- Seconds between background checks — 86400 = once/day, Sparkle's own
+         documented default; spelled out explicitly rather than left
+         implicit so a future "перевіряти щотижня"-style Settings toggle has
+         an obvious existing key to read/write instead of guessing. -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>

@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import ReplixerMacCore
 
 /// Phase 8.1 — menu bar presence. Windows-parity source: `TrayViewModel` +
@@ -23,7 +24,12 @@ final class StatusItemController {
     private let statusLabelItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var observer: NSObjectProtocol?
 
-    init() {
+    /// Phase 9: `init()` is now `init(updaterController:)` — the one extra
+    /// call site (`ReplixerMacApp.swift`'s `AppDelegate`) already owns the
+    /// `SPUStandardUpdaterController` for the app's whole lifetime, so this
+    /// menu just needs a reference to hang a "Перевірити оновлення…" item's
+    /// target/action off of, not a second instance of its own.
+    init(updaterController: SPUStandardUpdaterController) {
         statusItem.button?.image = NSImage(
             systemSymbolName: "waveform",
             accessibilityDescription: "ReplixerMac"
@@ -38,6 +44,28 @@ final class StatusItemController {
         let openItem = NSMenuItem(title: "Відкрити ReplixerMac", action: #selector(openMainWindow), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
+
+        // Phase 9 — wired directly to SPUStandardUpdaterController's own
+        // `checkForUpdates(_:)` action method (the same selector Xcode-based
+        // apps connect an IB menu item to), not a closure of our own — it
+        // already does the right thing (shows Sparkle's standard "checking…"
+        // / "up to date" / "update available" UI), so there's nothing for
+        // this class to mediate.
+        let updateItem = NSMenuItem(
+            title: "Перевірити оновлення…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updateItem.target = updaterController
+        // No paid Apple Developer ID yet (see Scripts/release.sh's header
+        // comment) — every downloaded update is ad-hoc signed, so Gatekeeper
+        // blocks its first launch until the user manually approves it via
+        // System Settings. Sparkle's own "update available" dialog already
+        // surfaces the same explanation as release notes (release.sh's
+        // GATEKEEPER_NOTE), but this tooltip covers the person who just
+        // clicks this menu item directly without reading that dialog.
+        updateItem.toolTip = "Після встановлення нової версії, якщо застосунок не відкриється сам: Системні налаштування → Конфіденційність і безпека → «Все одно відкрити»."
+        menu.addItem(updateItem)
 
         menu.addItem(.separator())
 
