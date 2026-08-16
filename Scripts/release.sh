@@ -68,8 +68,31 @@ DOWNLOAD_URL="https://github.com/antoniukmewgen-byte/ReplixerMac/releases/downlo
 echo "==> Bumping version to $VERSION"
 CURRENT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST")"
 NEXT_BUILD=$((CURRENT_BUILD + 1))
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" "$INFO_PLIST"
+# NOT PlistBuddy Set here (confirmed the hard way on a real release run) —
+# PlistBuddy re-serializes the WHOLE plist through CFPropertyList on any
+# Set, and XML comments aren't part of the plist data model, so every doc
+# comment in this file (there are a lot) silently vanishes on the very
+# first release. Text-splice instead, same reasoning as the appcast.xml
+# <item> insertion below: touch only the two specific <string> values,
+# byte-for-byte identical everywhere else.
+python3 - "$INFO_PLIST" "$VERSION" "$NEXT_BUILD" <<'PY'
+import re, sys
+path, version, next_build = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+text, n1 = re.subn(
+    r"(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)",
+    lambda m: m.group(1) + version + m.group(2),
+    text, count=1,
+)
+text, n2 = re.subn(
+    r"(<key>CFBundleVersion</key>\s*<string>)[^<]*(</string>)",
+    lambda m: m.group(1) + next_build + m.group(2),
+    text, count=1,
+)
+if n1 != 1 or n2 != 1:
+    sys.exit("release.sh: could not find CFBundleShortVersionString/CFBundleVersion in Info.plist")
+open(path, "w", encoding="utf-8").write(text)
+PY
 echo "    CFBundleShortVersionString = $VERSION, CFBundleVersion = $NEXT_BUILD"
 
 echo "==> Building ReplixerMac.app (universal)"
