@@ -89,11 +89,19 @@ jobs:
           )
           # Tolerant of formatting drift from the AppSecrets.example.swift
           # template this was modeled on: optional `public`, optional
-          # explicit `: String` type annotation, and either a single-line
-          # "..." or a triple-quoted multi-line """...""" current value.
+          # explicit `: String` type annotation, and the current value in
+          # ANY of Swift's three string-literal forms — plain "..." (with
+          # proper backslash-escape awareness, not just "stop at the first
+          # quote"), triple-quoted multi-line """...""", or a raw string
+          # #"..."#/##"..."##/... (very plausible choice for a human hand-
+          # pasting a JSON blob full of quotes — no escaping needed). The
+          # \3 backreference requires the closing #-run to match the
+          # opening one, exactly like the Swift compiler requires.
           pattern = re.compile(
               r'((?:public\s+)?(?:static\s+)?let\s+googleServiceAccountJson\s*'
-              r'(?::\s*String\s*)?=\s*)("""[\s\S]*?"""|"[^"]*")'
+              r'(?::\s*String\s*)?=\s*)'
+              r'("""(?:.*?)"""|(#+)"(?:.*?)"\3|"(?:[^"\\]|\\.)*")',
+              re.DOTALL,
           )
           text, n = pattern.subn(
               lambda m: m.group(1) + '"' + escaped + '"',
