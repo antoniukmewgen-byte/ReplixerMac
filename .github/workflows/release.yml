@@ -1,0 +1,202 @@
+name: Release
+
+# Phase 9.1 — CI-automated release, step 2 of 2. Triggered by the tag push
+# Scripts/prepare-release.sh ends with. Windows parity: this is the mac
+# equivalent of Replixer's release.yml (tag push -> build -> sign ->
+# manifest -> GitHub Release) — see release.sh's original header comment,
+# which deliberately deferred this automation until now.
+#
+# !! Two spots below are marked VERIFY — I could not run sign_update or
+# check sparkle-project/Sparkle's actual release asset naming myself (no
+# macOS access), so their exact flags/URLs are my best understanding of
+# Sparkle's documented CI usage, not something I've tested end to end.
+# Treat the FIRST real tag pushed through this workflow as a test: watch
+# the "Download Sparkle CLI tools" and "Sign DMG" steps specifically, and
+# be ready to fix a flag/URL by hand (`sign_update --help` /
+# `generate_keys --help` on your Mac will show the real options) if either
+# fails.
+#
+# Ad-hoc signing (no paid Developer ID yet, see release.sh's header) is
+# unchanged by this automation — Gatekeeper will still block first launch
+# of every new version until that changes; GATEKEEPER_NOTE below still
+# ships in the release notes for that reason.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore AppSecrets.swift
+        env:
+          APPSECRETS_SWIFT: ${{ secrets.APPSECRETS_SWIFT }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          data = base64.b64decode(os.environ["APPSECRETS_SWIFT"])
+          open("Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift", "wb").write(data)
+          PY
+
+      - name: Inject Google credentials into AppSecrets.swift
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          path = "Sources/ReplixerMacCore/GoogleDrive/AppSecrets.swift"
+          text = open(path, encoding="utf-8").read()
+          json_value = os.environ["GOOGLE_CREDENTIALS_JSON"]
+          escaped = (
+              json_value
+              .replace("\\", "\\\\")
+              .replace('"', '\\"')
+              .replace("\r\n", "\\n")
+              .replace("\n", "\\n")
+              .replace("\r", "\\n")
+          )
+          pattern = re.compile(
+              r'((?:public\s+)?(?:static\s+)?let\s+googleServiceAccountJson\s*'
+              r'(?::\s*String\s*)?=\s*)'
+              r'("""(?:.*?)"""|(#+)"(?:.*?)"\3|"(?:[^"\\]|\\.)*")',
+              re.DOTALL,
+          )
+          text, n = pattern.subn(
+              lambda m: m.group(1) + '"' + escaped + '"',
+              text, count=1,
+          )
+          if n != 1:
+              raise SystemExit("release.yml: could not find googleServiceAccountJson in AppSecrets.swift")
+          open(path, "w", encoding="utf-8").write(text)
+          PY
+
+      - name: Determine version from Info.plist / tag
+        run: |
+          INFO_PLIST="Sources/ReplixerMacApp/Info.plist"
+          VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")"
+          NEXT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # Guards against tagging without having run prepare-release.sh
+          # first (or tagging the wrong commit) — Info.plist's version at
+          # this commit MUST already match the tag, since this workflow
+          # only ever reads it, never bumps it itself.
+          if [ "$VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match Info.plist's CFBundleShortVersionString ($VERSION) at this commit. Run Scripts/prepare-release.sh $TAG_VERSION first." >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "NEXT_BUILD=$NEXT_BUILD" >> "$GITHUB_ENV"
+          echo "DMG_NAME=ReplixerMac-$VERSION.dmg" >> "$GITHUB_ENV"
+
+      - name: Build ReplixerMac.app (universal)
+        run: Scripts/build-app-bundle.sh
+
+      - name: Package DMG
+        run: |
+          DIST_DIR=".build/dist"
+          rm -rf "$DIST_DIR"
+          mkdir -p "$DIST_DIR/staging"
+          cp -R ".build/ReplixerMac.app" "$DIST_DIR/staging/ReplixerMac.app"
+          ln -s /Applications "$DIST_DIR/staging/Applications"
+          hdiutil create -volname "ReplixerMac $VERSION" -srcfolder "$DIST_DIR/staging" -ov -format UDZO "$DIST_DIR/$DMG_NAME"
+          rm -rf "$DIST_DIR/staging"
+          echo "DMG_PATH=$DIST_DIR/$DMG_NAME" >> "$GITHUB_ENV"
+
+      # VERIFY: asset naming for sparkle-project/Sparkle's full CLI-tools
+      # distribution (NOT the SPM-only xcframework zip) — release.sh's
+      # header comment (written when this was set up manually) says
+      # "Sparkle-X.Y.Z.tar.xz"; pin the version to match Package.swift's
+      # `from: "2.6.4"` floor. Bump this alongside Package.swift if that
+      # floor ever changes.
+      - name: Download Sparkle CLI tools (sign_update)
+        run: |
+          SPARKLE_CLI_VERSION="2.6.4"
+          curl -fL -o /tmp/sparkle-cli.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_CLI_VERSION/Sparkle-$SPARKLE_CLI_VERSION.tar.xz"
+          mkdir -p /tmp/sparkle-cli
+          tar -xf /tmp/sparkle-cli.tar.xz -C /tmp/sparkle-cli
+
+      # VERIFY: `-f <private-key-file>` is sign_update's documented flag
+      # for signing with a key from a file instead of the login Keychain
+      # (Sparkle's own CI-integration guidance) — double check with
+      # `/tmp/sparkle-cli/bin/sign_update --help` if this step fails.
+      - name: Sign DMG with Sparkle's EdDSA key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          KEY_FILE="$(mktemp)"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          SIGN_OUTPUT="$(/tmp/sparkle-cli/bin/sign_update -f "$KEY_FILE" "$DMG_PATH")"
+          rm -f "$KEY_FILE"
+          echo "    $SIGN_OUTPUT"
+          ED_SIGNATURE="$(echo "$SIGN_OUTPUT" | sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p')"
+          if [ -z "$ED_SIGNATURE" ]; then
+            echo "::error::Could not parse sparkle:edSignature out of sign_update's output." >&2
+            exit 1
+          fi
+          echo "ED_SIGNATURE=$ED_SIGNATURE" >> "$GITHUB_ENV"
+          echo "DMG_LENGTH=$(stat -f%z "$DMG_PATH")" >> "$GITHUB_ENV"
+
+      - name: Insert <item> into appcast.xml
+        run: |
+          DOWNLOAD_URL="https://github.com/antoniukmewgen-byte/ReplixerMac/releases/download/v$VERSION/$DMG_NAME"
+          PUB_DATE="$(date -u +"%a, %d %b %Y %H:%M:%S +0000")"
+          GATEKEEPER_NOTE="Якщо після оновлення застосунок не відкриється автоматично: Системні налаштування → Конфіденційність і безпека → прокрутіть вниз до попередження про ReplixerMac → «Все одно відкрити». Це одноразово для кожної версії (поки немає платного Apple Developer ID)."
+          RELEASE_NOTES_HTML="<![CDATA[<p>Версія $VERSION.</p><p><b>$GATEKEEPER_NOTE</b></p>]]>"
+          ITEM=$(cat <<EOF
+        <item>
+            <title>Версія $VERSION</title>
+            <pubDate>$PUB_DATE</pubDate>
+            <sparkle:version>$NEXT_BUILD</sparkle:version>
+            <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+            <description>$RELEASE_NOTES_HTML</description>
+            <enclosure url="$DOWNLOAD_URL" sparkle:edSignature="$ED_SIGNATURE" length="$DMG_LENGTH" type="application/octet-stream" />
+        </item>
+EOF
+)
+          MARKER="<!-- release.sh:insert-here"
+          python3 - "appcast.xml" "$MARKER" "$ITEM" <<'PY'
+          import sys
+          path, marker, item = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(path, encoding="utf-8").read()
+          idx = text.index(marker)
+          end = text.index("\n", text.index("-->", idx)) + 1
+          open(path, "w", encoding="utf-8").write(text[:end] + item + "\n" + text[end:])
+          PY
+
+      - name: Commit updated appcast.xml to main
+        run: |
+          # Sanity check: this tag must be building from the exact commit
+          # that is currently main's tip (true by construction if
+          # Scripts/prepare-release.sh was used — it commits, tags, and
+          # pushes both in one shot). If main has moved since, committing
+          # appcast.xml here would either fail to push (diverged history)
+          # or, worse, silently land on top of unrelated later commits.
+          git fetch origin main
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::v$VERSION is not building from the tip of main (origin/main has moved since this tag was pushed) — refusing to push appcast.xml to avoid a confusing history. Re-run this job, or patch appcast.xml by hand." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B main
+          git add appcast.xml
+          git commit -m "Update appcast.xml for v$VERSION"
+          git push origin main
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v$VERSION" "$DMG_PATH" "appcast.xml" \
+            --title "v$VERSION" \
+            --notes "Версія $VERSION."

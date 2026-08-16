@@ -1,9 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-# Phase 9 — local, manual release flow (no CI yet; deliberate first step —
-# add GitHub Actions automation later, once signing with a real Developer ID
-# identity is in place, mirroring Replixer's release.yml more closely).
+# Phase 9 — local, manual release flow.
+#
+# Phase 9.1 update: GitHub Actions automation now exists —
+# Scripts/prepare-release.sh + .github/workflows/release.yml — and is the
+# normal path going forward (mirrors Replixer's release.yml: tag push ->
+# build -> sign -> manifest -> GitHub Release, done on GitHub's servers
+# instead of by hand). THIS script stays as a manual/local fallback: fully
+# offline testing without pushing a public tag, or an escape hatch if the
+# CI path ever needs to be bypassed. Its own signing/packaging logic is
+# also what release.yml's steps were copied from — keep the two in sync if
+# either changes.
 # Windows parity in *shape* only: Replixer's release.yml (tag push -> build
 # -> sign -> manifest -> GitHub Release) does that sequence automatically on
 # GitHub's servers; this script does the same sequence by hand, run locally
