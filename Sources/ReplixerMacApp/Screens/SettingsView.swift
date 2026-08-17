@@ -127,9 +127,45 @@ struct SettingsView: View {
             } header: {
                 Label("Дані застосунку", systemImage: "externaldrive.fill")
             }
+
+            // Windows parity: SettingsViewModel.AppVersion ("v{major.minor.build}",
+            // bound in the "ПРО ДОДАТОК" card at the bottom of SettingsPage.xaml) —
+            // this was the one field flagged as missing after the Phase 9.1 CI
+            // release-automation work landed, since there was previously no way
+            // to confirm from inside the running app which build actually
+            // installed. Reads straight from Info.plist's CFBundleShortVersionString
+            // (same value TelegramUploadService.appVersion already reads for its
+            // upload-caption footer) rather than duplicating the version anywhere
+            // — Scripts/prepare-release.sh's text-splice is the one place that
+            // ever writes it, so this can only ever show what's actually running.
+            Section {
+                HStack(spacing: 12) {
+                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                        .resizable()
+                        .frame(width: 40, height: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ReplixerMac")
+                            .font(.headline)
+                        Text("v\(Self.appVersion)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Label("Про застосунок", systemImage: "info.circle.fill")
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Налаштування")
+    }
+
+    // Falls back to "0.1.0-poc" (same sentinel TelegramUploadService.appVersion
+    // already uses) if Info.plist's key is ever missing — should only happen
+    // running a raw SPM executable outside a real .app bundle, never in a
+    // release build.
+    private static var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0-poc"
     }
 
     // Empty/whitespace-only names are silently rejected rather than saved —
