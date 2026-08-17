@@ -16,7 +16,7 @@ import ReplixerMacCore
 /// remains useful as a UI-less runner/smoke-test harness) — the two aren't
 /// meant to run at the same time against the same user, same as Windows
 /// only ever running as a single instance.
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let coordinator = CallRecordingCoordinator()
     private let monitor = CallMonitor()
     private lazy var pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
@@ -68,6 +68,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
+
+        // Phase 13.3 — Windows parity: this app has no Dock icon
+        // (LSUIElement=true / `.accessory` above), so unlike a normal
+        // `.regular` app the default AppKit behavior for an accessory app's
+        // last window closing is to just close/hide it — the process (and
+        // its menu-bar NSStatusItem) keeps running, only reachable again via
+        // StatusItemController's "Відкрити ReplixerMac" item. That's not
+        // what a red traffic-light ✕ means to a user: on Windows the main
+        // window's close button *is* a full quit (no separate "minimize to
+        // tray" affordance), and tray-only apps that silently keep running
+        // after their visible window closes are a common source of "why is
+        // this still using my mic" confusion — worth avoiding here even
+        // though tray/menu-bar-only operation is otherwise intentional
+        // (Phase 8.3). So: become the delegate of the one-and-only
+        // WindowGroup-created window (same `NSApp.windows.first` "there's
+        // only ever one" assumption `StatusItemController.openMainWindow()`
+        // already relies on) and route its close button through the exact
+        // same full-termination path `StatusItemController.quit()` uses —
+        // see `windowShouldClose(_:)` below.
+        NSApp.windows.first?.delegate = self
 
         // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
         // `.inprogress` file / dangling `.recording` history entry left by a
@@ -141,6 +161,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // "start once at launch, stop on quit" lifecycle as
         // pendingUploadRetryService above.
         MissedCallDeliveryService.shared.start()
+    }
+
+    /// Phase 13.3 — makes the main window's red ✕ a full quit instead of
+    /// AppKit's default accessory-app "just close/hide the window" behavior
+    /// (see the doc comment on the `NSApp.windows.first?.delegate = self`
+    /// line above for why). Returning `false` here means the ✕ click itself
+    /// never actually closes the window directly — instead `NSApp.terminate`
+    /// drives the *entire* shutdown, including this same window's closing,
+    /// through `applicationShouldTerminate(_:)` below, exactly like
+    /// Cmd+Q/Dock-quit/`StatusItemController.quit()` already do. Unreachable
+    /// while a sheet (`CallReportView`/`CallConfirmView`/
+    /// `MissedCallReportView`) is attached — AppKit disables a window's
+    /// close button for the whole time it has an attached sheet, so there's
+    /// no risk of this firing mid-dialog.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        NSApp.terminate(nil)
+        return false
     }
 
     /// AppKit's async-shutdown hook: returning `.terminateLater` and calling
