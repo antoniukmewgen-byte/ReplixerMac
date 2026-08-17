@@ -26,6 +26,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     // object is deallocated, so it needs a strong reference for the whole
     // app lifetime, same reasoning as `coordinator`/`monitor` above.
     private var statusItemController: StatusItemController?
+    // Phase 13.1/13.2: menu-bar/tray-adjacent floating widgets. Same
+    // "held here, not a local var" reasoning as statusItemController above
+    // — CheatSheetWindowController's NSPanel would be torn down the moment
+    // its owning object deallocates if it weren't kept alive for the app's
+    // whole lifetime, and worldClockController needs to outlive the single
+    // `toggle()` call StatusItemController's menu item makes into it.
+    private let cheatSheetController = CheatSheetWindowController()
+    private let worldClockController = WorldClockWindowController()
     // Phase 9: owns the update lifecycle (background checks per Info
     // .plist's SUScheduledCheckInterval, the "Перевірити оновлення…" menu
     // item's target, and the whole download/verify/relaunch flow when an
@@ -59,7 +67,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
 
-        statusItemController = StatusItemController(updaterController: updaterController)
+        statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
 
         // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
         // `.inprogress` file / dangling `.recording` history entry left by a

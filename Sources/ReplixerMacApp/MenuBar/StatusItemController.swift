@@ -24,12 +24,21 @@ final class StatusItemController {
     private let statusLabelItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var observer: NSObjectProtocol?
 
+    // Phase 13.2: held so `worldClockItem`'s action can call
+    // `toggle()` on it — same "controller passed in, this class just wires
+    // a menu item to it" shape as `updaterController` below, not a second
+    // instance of its own.
+    private let worldClockController: WorldClockWindowController
+
     /// Phase 9: `init()` is now `init(updaterController:)` — the one extra
     /// call site (`ReplixerMacApp.swift`'s `AppDelegate`) already owns the
     /// `SPUStandardUpdaterController` for the app's whole lifetime, so this
     /// menu just needs a reference to hang a "Перевірити оновлення…" item's
-    /// target/action off of, not a second instance of its own.
-    init(updaterController: SPUStandardUpdaterController) {
+    /// target/action off of, not a second instance of its own. Phase 13.2
+    /// adds `worldClockController` alongside it for the same reason.
+    init(updaterController: SPUStandardUpdaterController, worldClockController: WorldClockWindowController) {
+        self.worldClockController = worldClockController
+
         statusItem.button?.image = NSImage(
             systemSymbolName: "waveform",
             accessibilityDescription: "ReplixerMac"
@@ -44,6 +53,14 @@ final class StatusItemController {
         let openItem = NSMenuItem(title: "Відкрити ReplixerMac", action: #selector(openMainWindow), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
+
+        // Phase 13.2 — Windows parity: `TrayViewModel.WorldClockCommand`.
+        // A plain toggle, same as Windows' tray item (no checkmark state
+        // tracked here — WorldClockWindowController itself is the single
+        // source of truth for whether the panel is currently open).
+        let worldClockItem = NSMenuItem(title: "Світовий годинник", action: #selector(toggleWorldClock), keyEquivalent: "")
+        worldClockItem.target = self
+        menu.addItem(worldClockItem)
 
         // Phase 9 — wired directly to SPUStandardUpdaterController's own
         // `checkForUpdates(_:)` action method (the same selector Xcode-based
@@ -108,6 +125,10 @@ final class StatusItemController {
         // "the first window" is unambiguous. If the user closed it, this
         // brings it back the same way clicking the Dock icon would.
         NSApp.windows.first?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func toggleWorldClock() {
+        worldClockController.toggle()
     }
 
     @objc private func quit() {
