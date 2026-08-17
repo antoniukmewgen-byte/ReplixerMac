@@ -67,10 +67,15 @@ public final class CallConfirmRequestStore {
     /// Only one request can be pending at a time, same single-active-call
     /// assumption as `CallReportRequestStore.requestReport`: a second call
     /// here before the first resolves would silently orphan the first
-    /// continuation (it never resumes). Not fully closed off — e.g. a call
-    /// could end while the "start recording?" dialog is still up — but rare
-    /// enough, and non-corrupting enough (the orphaned Task just never calls
-    /// into the coordinator), to accept for now rather than add a queue.
+    /// continuation (it never resumes).
+    ///
+    /// The "a call could end while the 'start recording?' dialog is still
+    /// up" case this comment used to flag as an accepted gap is now closed —
+    /// `AppDelegate`'s `monitor.onCallEnded` closure calls `submit(false)`
+    /// itself (Windows parity: `HomeViewModel.OnCallEnded`'s
+    /// `if (!_isRecording) { DismissDialog(); return; }`) whenever it fires
+    /// while nothing is recording yet, which is exactly the signal that the
+    /// still-open `.start` dialog's call has already gone away.
     public func requestConfirmation(kind: Kind, platform: String, recordingStartedAt: Date? = nil) async -> Bool {
         await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             lock.lock()
@@ -83,6 +88,13 @@ public final class CallConfirmRequestStore {
 
     /// Called by `CallConfirmView` when the user picks an action —
     /// `true` for "record"/"stop", `false` for "skip"/"continue recording".
+    /// Also called with `false` by `AppDelegate`'s `monitor.onCallEnded`
+    /// closure to auto-dismiss a stale `.start` dialog whose call already
+    /// ended before the user answered — see `requestConfirmation`'s doc
+    /// comment. Same resume path either way: whoever is awaiting
+    /// `requestConfirmation` can't tell a real "Пропустити" tap apart from
+    /// an auto-dismiss, which is exactly the desired effect (neither should
+    /// start recording).
     public func submit(_ confirmed: Bool) {
         lock.lock()
         let resumingContinuation = continuation

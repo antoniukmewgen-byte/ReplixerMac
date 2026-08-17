@@ -142,10 +142,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         monitor.onCallEnded = { [coordinator] messenger, name in
             Task {
-                // Nothing to confirm-stop if the matching "start recording?"
-                // dialog for this call was answered "Пропустити" — Windows
-                // parity: OnCallEnded's `if (!_isRecording) { DismissDialog(); return; }`.
-                guard await coordinator.isRecordingNow else { return }
+                // Windows parity: OnCallEnded's
+                // `if (!_isRecording) { DismissDialog(); return; }`. Not
+                // recording yet most likely means the "start recording?"
+                // dialog for this same call is still open and unanswered —
+                // the call itself just disappeared out from under it (poll
+                // saw mic+speaker both drop before the user ever tapped a
+                // button). `submit(false)` resumes that dialog's suspended
+                // `requestConfirmation` continuation exactly as if the user
+                // had tapped "Пропустити" themselves, so `onCallStarted`'s
+                // `guard confirmed else { return }` above unwinds cleanly
+                // instead of the sheet sitting there asking to record a call
+                // that no longer exists. Guarded on `.kind == .start`
+                // specifically — CallMonitor only ever tracks one call at a
+                // time, so there's nothing else this stale pending request
+                // could be.
+                guard await coordinator.isRecordingNow else {
+                    if CallConfirmRequestStore.shared.pending?.kind == .start {
+                        CallConfirmRequestStore.shared.submit(false)
+                    }
+                    return
+                }
                 guard CallConfirmRequestStore.shared.pending == nil else { return }
                 // Phase 11.3 — same reasoning as onCallStarted above.
                 CallReportRequestStore.shared.interrupt()
