@@ -31,6 +31,24 @@
     <string>5</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- Phase 13.4 — app icon, ported straight from Windows' Assets/Icons/
+         IconApp.png (the "RE" monogram) via Sources/ReplixerMacApp/
+         AppIcon.icns (generated from that same 512×512 source — no higher-
+         res/vector source exists on the Windows side to derive a cleaner
+         1024 top size from). No `.xcassets`/asset catalog in this project
+         (bare SwiftPM executable, not an Xcode app target), so this is the
+         classic pre-asset-catalog mechanism: a loose `AppIcon.icns` dropped
+         into Contents/Resources (see Scripts/build-app-bundle.sh) with
+         CFBundleIconFile naming it by filename stem, no extension. Only
+         takes effect for the real .app bundle that script produces — the
+         raw Xcode-debug executable (this same Info.plist embedded via
+         Package.swift's `__info_plist` linker section) has no
+         Contents/Resources to find the icns in, so it keeps showing
+         Xcode's generic tool icon while debugging; that's fine, matches
+         how LSUIElement/TCC strings already only fully apply once
+         bundled too. -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
     <!-- Phase 8.3: menu-bar-only, no Dock icon/Cmd+Tab entry — Windows-tray

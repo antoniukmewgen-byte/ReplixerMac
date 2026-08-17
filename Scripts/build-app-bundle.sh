@@ -63,7 +63,11 @@ echo "==> Assembling $APP_NAME.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Frameworks"
+mkdir -p "$APP_DIR/Contents/Resources"
 cp "$REPO_DIR/Sources/ReplixerMacApp/Info.plist" "$APP_DIR/Contents/Info.plist"
+# Phase 13.4: app icon — matches Info.plist's CFBundleIconFile=AppIcon
+# (filename stem, no extension, per the classic loose-icns convention).
+cp "$REPO_DIR/Sources/ReplixerMacApp/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 echo "==> lipo: merging arm64 + x86_64 into one universal binary"
 lipo -create \
