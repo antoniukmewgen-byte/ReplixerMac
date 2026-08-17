@@ -124,7 +124,16 @@ final class StatusItemController {
         // one window for this app (no multi-window/document support), so
         // "the first window" is unambiguous. If the user closed it, this
         // brings it back the same way clicking the Dock icon would.
-        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        if let window = NSApp.windows.first {
+            // `makeKeyAndOrderFront` alone doesn't undo miniaturization
+            // (Dock genie-effect state) — a separate AppKit window state
+            // from front/back ordering. Same fix, same reasoning as
+            // ContentView.refreshActiveCallSheet()'s doc comment.
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     @objc private func toggleWorldClock() {

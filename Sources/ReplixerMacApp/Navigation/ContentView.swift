@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ReplixerMacCore
 
 /// Root navigation shell — macOS-standard `NavigationSplitView` sidebar,
@@ -87,6 +88,7 @@ struct ContentView: View {
     @State private var activeCallSheet: ActiveCallSheet?
 
     private func refreshActiveCallSheet() {
+        let previousID = activeCallSheet?.id
         if let report = CallReportRequestStore.shared.pending {
             activeCallSheet = .report(report)
         } else if let confirm = CallConfirmRequestStore.shared.pending {
@@ -95,6 +97,42 @@ struct ContentView: View {
             activeCallSheet = .missedCall(missedCall)
         } else {
             activeCallSheet = nil
+        }
+
+        // Bring the app (menu-bar-only, .accessory — no Dock icon to click)
+        // to the front whenever a *new* sheet request appears — covers both
+        // halves of the ask: call detection firing the confirm dialog
+        // (`monitor.onCallStarted`/`onCallEnded` -> CallConfirmRequestStore)
+        // and the report form opening (CallReportView/MissedCallReportView),
+        // since both funnel through this same single `activeCallSheet`
+        // (see its own doc comment for why report/confirm/missedCall share
+        // one `.sheet(item:)`). Gated on the *id* actually changing, not
+        // just "is non-nil" — `refreshActiveCallSheet()` reruns on every
+        // didChange notification from any of the three stores, and
+        // `activate(ignoringOtherApps:)` would otherwise yank focus away
+        // from whatever the manager is doing mid-form on every unrelated
+        // refresh, not just when a genuinely new dialog appears. Same
+        // "activate + bring the one-and-only window front, deminiaturizing
+        // if needed" pattern StatusItemController.openMainWindow() uses.
+        if let activeCallSheet, activeCallSheet.id != previousID {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first {
+                // `makeKeyAndOrderFront` alone does NOT undo miniaturization
+                // (the Dock genie-effect state) — that's a separate window
+                // state AppKit tracks independently of front/back ordering,
+                // unlike WPF's WindowState.Minimized which Windows'
+                // RestoreIfMinimized() clears by setting WindowState.Normal
+                // before its own Activate() call. Without this check, a
+                // manager who minimized the window would see the app become
+                // active/frontmost but the window itself stay collapsed as a
+                // Dock icon — worth guarding explicitly rather than assuming
+                // `makeKeyAndOrderFront` implies "not minimized" like it
+                // would for a merely-background (not miniaturized) window.
+                if window.isMiniaturized {
+                    window.deminiaturize(nil)
+                }
+                window.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
