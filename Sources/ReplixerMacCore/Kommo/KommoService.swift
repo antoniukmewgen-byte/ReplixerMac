@@ -22,10 +22,13 @@ import PhoneNumberKit
 /// Phase 10.1c adds the one leg 10.1b deliberately left out: the
 /// phone/timezone-derived "робочий час" processing-speed variant
 /// (`trySetLocalTimeProcessingSpeed` below), using `PhoneNumberKit` (added
-/// to `Package.swift` this phase) for phone parsing plus a hand-maintained
-/// `USAreaCodeTimeZones` table standing in for Windows' proprietary
-/// libphonenumber-csharp geocoder data — see both types' doc comments for
-/// exactly where the fidelity is scoped down.
+/// to `Package.swift` this phase) for phone parsing plus, as of the
+/// 10.1c revision, `NANPTimeZoneMapper` — a Swift port of the same
+/// libphonenumber geocoder data Windows' `libphonenumber-csharp` dependency
+/// reads — for the actual zone lookup, in place of the original
+/// hand-maintained per-area-code table. See both types' doc comments for
+/// exactly where fidelity is still scoped down (non-US/non-Ukrainian
+/// numbers).
 ///
 /// Still NOT ported: any missed-call-flow equivalent
 /// (`MissedCallReportViewModel`'s `NoCommunicationCallTypeMarker` use — mac
@@ -464,9 +467,11 @@ public enum KommoService {
 
     /// Windows parity source: `KommoService.TryResolveTimeZoneFromPhone`.
     /// `PhoneNumberKit` (added to `Package.swift` Phase 10.1c) replaces
-    /// libphonenumber-csharp for the parsing step; `USAreaCodeTimeZones`
-    /// replaces its `PhoneNumberToTimeZonesMapper` geocoder for the actual
-    /// zone lookup. Windows resolves a real geographic zone only for
+    /// libphonenumber-csharp for the parsing step; `NANPTimeZoneMapper`
+    /// (Phase 10.1c revision) replaces its `PhoneNumberToTimeZonesMapper`
+    /// geocoder for the actual zone lookup — same underlying libphonenumber
+    /// geocoder data both sides ultimately read, not just a same-shaped
+    /// re-implementation. Windows resolves a real geographic zone only for
     /// Ukrainian and US numbers — every other country (Canada included,
     /// since it has its own NANP region code distinct from "US") is treated
     /// as if the client were in Miami; that exact behavior is reproduced
@@ -503,8 +508,12 @@ public enum KommoService {
         }
 
         if phoneNumber.regionID == "US" {
-            let areaCode = String(String(phoneNumber.nationalNumber).prefix(3))
-            if let tzId = USAreaCodeTimeZones.timeZone(forAreaCode: areaCode), let tz = TimeZone(identifier: tzId) {
+            // Full digit string (country calling code + national number,
+            // e.g. "12125551234") — NANPTimeZoneMapper does its own
+            // longest-prefix match over this, at up to 7-digit granularity,
+            // not just the 3-digit area code the old table matched on.
+            let fullDigits = "\(phoneNumber.countryCode)\(phoneNumber.nationalNumber)"
+            if let tzId = NANPTimeZoneMapper.timeZone(forDigits: fullDigits), let tz = TimeZone(identifier: tzId) {
                 return (tz, false)
             }
         }

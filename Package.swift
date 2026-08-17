@@ -55,7 +55,17 @@ let package = Package(
             // producing a duplicate `AppSecrets` declaration and "ambiguous
             // use of telegramApiId/telegramApiHash/googleServiceAccountJson"
             // at every call site. Only the real file should ever build.
-            exclude: ["GoogleDrive/AppSecrets.example.swift"]
+            exclude: ["GoogleDrive/AppSecrets.example.swift"],
+            // Phase 10.1c (revision): first bundled resource in the
+            // project — the NANP subset of libphonenumber's own
+            // prefix->timezone geocoder data (see
+            // Kommo/Resources/nanp_timezones.txt's header for provenance),
+            // loaded at runtime via the auto-generated `Bundle.module` by
+            // `NANPTimeZoneMapper`. `.copy` (not `.process`) because this is
+            // a plain data file that must reach the app bundle byte-for-byte,
+            // not something SwiftPM's resource-processing pipeline should
+            // touch.
+            resources: [.copy("Kommo/Resources/nanp_timezones.txt")]
         ),
         // CLI entry point / smoke-test harness — now just main.swift, with
         // all actual logic living in ReplixerMacCore.
