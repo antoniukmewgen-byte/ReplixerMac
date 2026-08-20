@@ -70,6 +70,9 @@ final class CheatSheetWindowController {
         panel.contentView = hosting
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Native AppKit shadow, not a SwiftUI `.shadow(...)` in
+        // CheatSheetView — see WorldClockWindowController.show()'s doc
+        // comment.
         panel.hasShadow = true
         // .floating, not .modalPanel/.mainMenu — stays above normal
         // windows (including other apps') without fighting system UI like

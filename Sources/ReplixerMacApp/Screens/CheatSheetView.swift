@@ -48,8 +48,8 @@ struct CheatSheetView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 6)
-        // Breathing room for the shadow above to fall off into instead of
+        // Breathing room for AppKit's native window shadow (panel.hasShadow
+        // in CheatSheetWindowController) to fall off into instead of
         // clipping at the panel's edge — same reasoning Windows'
         // CallCheatSheetWindow doc comment gives for its own Margin.
         .padding(24)

@@ -34,6 +34,13 @@ final class WorldClockWindowController: NSObject, NSWindowDelegate {
         panel.contentView = hosting
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Native AppKit shadow, not a SwiftUI `.shadow(...)` in
+        // WorldClockView — a hand-drawn SwiftUI shadow on a borderless
+        // transparent panel double-stacked with AppKit's own per-pixel
+        // window shadow, and dropping the SwiftUI one alone didn't clear
+        // it up either. Letting AppKit own the shadow entirely matches the
+        // standard borderless-panel pattern and follows the view's actual
+        // alpha bounds directly.
         panel.hasShadow = true
         panel.level = .floating
         panel.isMovableByWindowBackground = true

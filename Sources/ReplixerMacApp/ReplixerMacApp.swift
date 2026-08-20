@@ -87,6 +87,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
         statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
 
+        // Windows parity: App.xaml.cs kicks off an update check on every
+        // launch (`mainVm.StartupUpdateCheckAsync()`), not just once/day.
+        // `SUScheduledCheckInterval` above still governs Sparkle's own
+        // background timer for long-running sessions, but without this
+        // explicit call a same-day relaunch would silently skip checking
+        // at all if Sparkle already checked earlier that day.
+        // `checkForUpdatesInBackground()` respects `SUEnableAutomaticChecks`
+        // (so it stays a no-op if the user has that setting off) and stays
+        // silent unless an update is actually found — unlike
+        // `checkForUpdates(_:)`, which always surfaces a "checking..." UI.
+        updaterController.updater.checkForUpdatesInBackground()
+
         // Phase 13.3 — Windows parity: this app has no Dock icon
         // (LSUIElement=true / `.accessory` above), so unlike a normal
         // `.regular` app the default AppKit behavior for an accessory app's

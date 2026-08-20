@@ -62,7 +62,6 @@ struct WorldClockView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 6)
         .padding(24)
     }
 
