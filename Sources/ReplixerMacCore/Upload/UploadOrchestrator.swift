@@ -299,9 +299,14 @@ enum UploadOrchestrator {
         }()
 
         async let noteTask: Int64? = postKommoNote(crmUrl: crmUrl, text: text)
-        async let metadataTask: Void = KommoService.applyCallMetadata(crmUrl: crmUrl, callStartTime: callStartedAt, callType: callType)
+        // Recording uploads don't track processing-speed values anywhere
+        // (no `crmUrl`/speed fields on `RecordingEntry` — that's a Sheets-
+        // delivery-only concern, see `MissedCallDeliveryService`), so the
+        // tuple `applyCallMetadata` now returns is simply discarded here,
+        // same as before this became a non-`Void` return.
+        async let metadataTask = KommoService.applyCallMetadata(crmUrl: crmUrl, callStartTime: callStartedAt, callType: callType)
         let noteId = await noteTask
-        await metadataTask
+        _ = await metadataTask
         return noteId ?? existingNoteId
     }
 

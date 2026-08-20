@@ -39,6 +39,19 @@ private enum TelegramChatSelection: Hashable {
     case chat(TelegramChat)
 }
 
+/// Phase 15: `GoogleSheetsUploadService.testAccess` returns a plain
+/// `String?` (nil = success), not a `CheckOutcome`-shaped enum like
+/// `KommoService`/`GoogleDriveFolderAccessSmokeTest` — those two return
+/// their own typed result because their checks fetch/display extra
+/// human-readable success text, while Sheets' success case has nothing
+/// worth showing beyond "connected". Rather than force a mismatched shared
+/// type, this is a tiny local mirror of the same two-case pattern so the
+/// Sheets section's Button/Label markup can stay identical to Drive/Kommo's.
+private enum SheetsCheckOutcome {
+    case success(String)
+    case failure(String)
+}
+
 struct ProfileView: View {
     // Phase 12: Windows parity `ProfileViewModel.IsGoogleDriveEnabled` — a
     // real opt-out toggle on top of folder-id presence (see
@@ -96,6 +109,20 @@ struct ProfileView: View {
     // Same persisted-status seeding as driveTestResult above.
     @State private var kommoTestResult: KommoService.CheckOutcome? =
         AppSettings.shared.isKommoConnected ? .success("Доступ підключено") : nil
+
+    // Phase 15: Windows parity `ProfileViewModel.IsGoogleSheetsEnabled` — see
+    // isDriveEnabled above for the same reasoning.
+    @State private var isSheetsEnabled = AppSettings.shared.isGoogleSheetsEnabled
+    // Sanitized on read, same reasoning as driveFolderId above —
+    // GoogleSheetsId.sanitize tolerates a full spreadsheet URL pasted
+    // straight from the browser address bar.
+    @State private var googleSheetsId: String =
+        GoogleSheetsId.sanitize(AppSettings.shared.googleSheetsId ?? "")
+    @State private var googleSheetsTabName: String = AppSettings.shared.googleSheetsTabName ?? ""
+    @State private var isTestingSheetsConnection = false
+    // Same persisted-status seeding as driveTestResult/kommoTestResult above.
+    @State private var sheetsTestResult: SheetsCheckOutcome? =
+        AppSettings.shared.isSheetsConnected ? .success("Доступ підключено") : nil
 
     // Phase 10.1c fix, extended after the "isReadyToAutoSave" attempt below
     // turned out not to be enough: a prior "telegramApiHash null-wipe"
@@ -257,8 +284,47 @@ struct ProfileView: View {
             }
 
             Section {
-                Text("Заплановано на Phase 10.")
-                    .foregroundStyle(.secondary)
+                Toggle("Автоматично додавати рядок у Google Таблицю", isOn: $isSheetsEnabled)
+                    .onChange(of: isSheetsEnabled) { _, newValue in
+                        AppSettings.shared.isGoogleSheetsEnabled = newValue
+                    }
+
+                if isSheetsEnabled {
+                    TextField("ID або посилання на Google Таблицю", text: $googleSheetsId)
+                        .onSubmit(saveGoogleSheetsId)
+                        .onChange(of: googleSheetsId) { _, _ in
+                            guard isReadyToAutoSave else { return }
+                            saveGoogleSheetsId()
+                        }
+                    TextField("Назва аркуша (напр. Аркуш1)", text: $googleSheetsTabName)
+                        .onSubmit(saveGoogleSheetsTabName)
+                        .onChange(of: googleSheetsTabName) { _, _ in
+                            guard isReadyToAutoSave else { return }
+                            saveGoogleSheetsTabName()
+                        }
+
+                    Button {
+                        testSheetsConnection()
+                    } label: {
+                        if isTestingSheetsConnection {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Перевірити з'єднання")
+                        }
+                    }
+                    .disabled(isTestingSheetsConnection)
+
+                    if let sheetsTestResult {
+                        switch sheetsTestResult {
+                        case .success(let message):
+                            Label(message, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(Theme.Status.saved)
+                        case .failure(let message):
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Theme.Status.warning)
+                        }
+                    }
+                }
             } header: {
                 Label("Google Sheets", systemImage: "tablecells.fill")
             }
@@ -279,6 +345,18 @@ struct ProfileView: View {
                 driveFolderId = sanitized
                 AppSettings.shared.isDriveConnected = false
                 driveTestResult = nil
+            }
+            // Same self-heal as the Drive folder id above, for a spreadsheet
+            // id/URL saved before GoogleSheetsId.sanitize existed (Phase 15
+            // introduced both the field and the sanitizer at the same time,
+            // but a stray "#gid=0" pasted straight from the browser could
+            // still slip through the isReadyToAutoSave-gated onChange below
+            // if this method was never named "sanitize" in an earlier
+            // pre-release build).
+            if let sanitized = GoogleSheetsId.sanitizedFromSettings(), sanitized != googleSheetsId {
+                googleSheetsId = sanitized
+                AppSettings.shared.isSheetsConnected = false
+                sheetsTestResult = nil
             }
             // See isReadyToAutoSave's doc comment above — deliberately deferred
             // one runloop tick past onAppear (not set true directly inside it)
@@ -370,6 +448,44 @@ struct ProfileView: View {
             case .failure(let message):
                 AppSettings.shared.isKommoConnected = false
                 kommoTestResult = .failure(message)
+            }
+        }
+    }
+
+    private func saveGoogleSheetsId() {
+        let sanitized = GoogleSheetsId.sanitize(googleSheetsId)
+        if sanitized != googleSheetsId {
+            googleSheetsId = sanitized
+        }
+        AppSettings.shared.googleSheetsId = sanitized.isEmpty ? nil : sanitized
+        // Same "unverified edit invalidates the cached status" reasoning as
+        // saveDriveFolderId/saveKommoSubdomain above.
+        AppSettings.shared.isSheetsConnected = false
+        sheetsTestResult = nil
+    }
+
+    private func saveGoogleSheetsTabName() {
+        let trimmed = googleSheetsTabName.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppSettings.shared.googleSheetsTabName = trimmed.isEmpty ? nil : trimmed
+        AppSettings.shared.isSheetsConnected = false
+        sheetsTestResult = nil
+    }
+
+    private func testSheetsConnection() {
+        isTestingSheetsConnection = true
+        sheetsTestResult = nil
+        Task {
+            let error = await GoogleSheetsUploadService.testAccess(
+                spreadsheetId: googleSheetsId,
+                sheetName: googleSheetsTabName
+            )
+            isTestingSheetsConnection = false
+            if let error {
+                AppSettings.shared.isSheetsConnected = false
+                sheetsTestResult = .failure(error)
+            } else {
+                AppSettings.shared.isSheetsConnected = true
+                sheetsTestResult = .success("Доступ підключено")
             }
         }
     }

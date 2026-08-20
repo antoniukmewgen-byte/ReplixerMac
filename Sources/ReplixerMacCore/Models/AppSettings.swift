@@ -198,6 +198,43 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Phase 15: Google Sheets — a second, independent missed-call delivery
+    // leg alongside Kommo (`MissedCallDeliveryService`), not used by the
+    // regular recording-upload path. Windows parity source: AppSettings.cs's
+    // `IsGoogleSheetsEnabled`/`GoogleSheetsId`/`GoogleSheetsTabName`
+    // (`GoogleSheetsId` accepts either a bare spreadsheet id or a full
+    // Sheets URL — `ProfileView`'s field applies the same
+    // `extractSpreadsheetId` sanitization on every edit Windows'
+    // `ProfileViewModel.ExtractSpreadsheetId` does). `googleSheetsTabName`
+    // empty/nil means "first/default tab" (`GoogleSheetsUploadService`
+    // treats a blank sheet name as "no `SheetName!`-prefix on the range").
+    // Defaults to false/opt-in, same reasoning as isKommoEnabled — there's
+    // no shared-across-every-build credential here (unlike Drive/Telegram),
+    // so a fresh install has nothing configured and shouldn't silently
+    // attempt delivery.
+    public var isGoogleSheetsEnabled: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    public var googleSheetsId: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+    public var googleSheetsTabName: String? {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
+    // Same persisted-status role as `isDriveConnected`/`isKommoConnected`
+    // above, for Sheets' own "Перевірити з'єднання" button — reset to false
+    // whenever `googleSheetsId`/`googleSheetsTabName` is edited. Windows'
+    // `AppSettings.IsGoogleSheetsConnected` is nullable (`bool?`); kept as a
+    // plain non-optional `Bool` here instead, matching this file's own
+    // established convention for `isDriveConnected`/`isKommoConnected`
+    // rather than Windows' tri-state shape — "never checked" and "checked,
+    // failed" both just render as the same "not connected" UI state either
+    // way.
+    public var isSheetsConnected: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramChatId
@@ -217,9 +254,13 @@ public final class AppSettings: Codable {
         case isKommoConnected
         case workDayStartMinutes
         case workDayEndMinutes
+        case isGoogleSheetsEnabled
+        case googleSheetsId
+        case googleSheetsTabName
+        case isSheetsConnected
     }
 
-    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, telegramPhone: String? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, telegramPhone: String? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60, isGoogleSheetsEnabled: Bool = false, googleSheetsId: String? = nil, googleSheetsTabName: String? = nil, isSheetsConnected: Bool = false) {
         self.managerName = managerName
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
@@ -238,6 +279,10 @@ public final class AppSettings: Codable {
         self.isKommoConnected = isKommoConnected
         self.workDayStartMinutes = workDayStartMinutes
         self.workDayEndMinutes = workDayEndMinutes
+        self.isGoogleSheetsEnabled = isGoogleSheetsEnabled
+        self.googleSheetsId = googleSheetsId
+        self.googleSheetsTabName = googleSheetsTabName
+        self.isSheetsConnected = isSheetsConnected
     }
 
     public required init(from decoder: Decoder) throws {
@@ -278,6 +323,10 @@ public final class AppSettings: Codable {
         isKommoConnected = try container.decodeIfPresent(Bool.self, forKey: .isKommoConnected) ?? false
         workDayStartMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayStartMinutes) ?? 9 * 60
         workDayEndMinutes = try container.decodeIfPresent(Int.self, forKey: .workDayEndMinutes) ?? 21 * 60
+        isGoogleSheetsEnabled = try container.decodeIfPresent(Bool.self, forKey: .isGoogleSheetsEnabled) ?? false
+        googleSheetsId = try container.decodeIfPresent(String.self, forKey: .googleSheetsId)
+        googleSheetsTabName = try container.decodeIfPresent(String.self, forKey: .googleSheetsTabName)
+        isSheetsConnected = try container.decodeIfPresent(Bool.self, forKey: .isSheetsConnected) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -300,6 +349,10 @@ public final class AppSettings: Codable {
         try container.encode(isKommoConnected, forKey: .isKommoConnected)
         try container.encode(workDayStartMinutes, forKey: .workDayStartMinutes)
         try container.encode(workDayEndMinutes, forKey: .workDayEndMinutes)
+        try container.encode(isGoogleSheetsEnabled, forKey: .isGoogleSheetsEnabled)
+        try container.encode(googleSheetsId, forKey: .googleSheetsId)
+        try container.encode(googleSheetsTabName, forKey: .googleSheetsTabName)
+        try container.encode(isSheetsConnected, forKey: .isSheetsConnected)
     }
 
     private static func load() -> AppSettings {

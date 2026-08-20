@@ -323,22 +323,45 @@ public enum KommoService {
     /// (not an error, nothing thrown/returned) when Kommo isn't configured
     /// or `crmUrl` doesn't parse — same opt-in-automation shape as
     /// `addNote`.
-    public static func applyCallMetadata(crmUrl: String, callStartTime: Date?, callType: String?) async {
-        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else { return }
-        guard let (subdomain, leadId) = parseLeadURL(crmUrl) else { return }
+    ///
+    /// Phase 15: now returns the two processing-speed values (previously
+    /// discarded entirely) so `MissedCallDeliveryService` can cache them
+    /// onto a `PendingMissedCall` for Google Sheets delivery — Windows
+    /// parity: `ProcessLeadAsync`'s `(NoteId, ProcessingSpeedMinutes,
+    /// ProcessingSpeedWorkMinutes)` tuple return (this method doesn't post
+    /// the note itself, so only the two speed values carry over here).
+    public static func applyCallMetadata(crmUrl: String, callStartTime: Date?, callType: String?) async -> (speedMinutes: Int?, speedWorkMinutes: Int?) {
+        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else { return (nil, nil) }
+        guard let (subdomain, leadId) = parseLeadURL(crmUrl) else { return (nil, nil) }
         let baseURL = "https://\(subdomain).kommo.com/api/v4"
 
         async let dateTask = resolveProcessingSpeed(baseURL: baseURL, token: token, leadId: leadId, callStartTime: callStartTime)
         async let callTypeTask: Void = applyCallTypeField(baseURL: baseURL, token: token, leadId: leadId, callType: callType)
         async let statusTask: Void = maybeAdvanceNedozvonStatus(baseURL: baseURL, token: token, leadId: leadId, callType: callType)
 
-        _ = await dateTask
+        let speeds = await dateTask
         await callTypeTask
         await statusTask
+        return speeds
     }
 
-    private static func resolveProcessingSpeed(baseURL: String, token: String, leadId: String, callStartTime: Date?) async -> Int? {
-        guard let callStartTime else { return nil }
+    /// Windows parity source: `KommoService.RecalculateProcessingSpeedAsync`
+    /// — a lightweight variant of `applyCallMetadata` used purely to
+    /// backfill the two speed values when Kommo already succeeded earlier
+    /// but they came back `nil` (e.g. the lead's contact/company wasn't
+    /// linked yet at that time). Skips the note/call-type/Nedozvon-status
+    /// legs entirely — just re-derives the speed fields via the same
+    /// `trySetFirstContactDate` path.
+    public static func recalculateProcessingSpeed(crmUrl: String, callStartTime: Date?) async -> (speedMinutes: Int?, speedWorkMinutes: Int?) {
+        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else { return (nil, nil) }
+        guard let (subdomain, leadId) = parseLeadURL(crmUrl) else { return (nil, nil) }
+        guard let callStartTime else { return (nil, nil) }
+        let baseURL = "https://\(subdomain).kommo.com/api/v4"
+        return await trySetFirstContactDate(baseURL: baseURL, token: token, leadId: leadId, callStartTime: callStartTime)
+    }
+
+    private static func resolveProcessingSpeed(baseURL: String, token: String, leadId: String, callStartTime: Date?) async -> (speedMinutes: Int?, speedWorkMinutes: Int?) {
+        guard let callStartTime else { return (nil, nil) }
         return await trySetFirstContactDate(baseURL: baseURL, token: token, leadId: leadId, callStartTime: callStartTime)
     }
 
@@ -361,7 +384,7 @@ public enum KommoService {
     /// (`firstContactOccupied`/`speedMinutesOccupied`/
     /// `speedWorkMinutesOccupied` below) — someone may have filled it in by
     /// hand in Kommo's UI already.
-    private static func trySetFirstContactDate(baseURL: String, token: String, leadId: String, callStartTime: Date) async -> Int? {
+    private static func trySetFirstContactDate(baseURL: String, token: String, leadId: String, callStartTime: Date) async -> (speedMinutes: Int?, speedWorkMinutes: Int?) {
         let details = await getLeadDetails(baseURL: baseURL, token: token, leadId: leadId)
 
         let firstContactUnix: Int64?
@@ -384,11 +407,15 @@ public enum KommoService {
             if !details.speedWorkMinutesOccupied {
                 await patchLeadField(baseURL: baseURL, token: token, leadId: leadId, fieldId: processingSpeedLocalTimeFieldId, value: 0)
             }
-            return details.speedMinutesOccupied ? details.speedMinutes : 0
+            let minutes = details.speedMinutesOccupied ? details.speedMinutes : 0
+            let workMinutes = details.speedWorkMinutesOccupied ? details.speedWorkMinutes : 0
+            return (minutes, workMinutes)
         }
 
         guard let createdAt = details.createdAt, let firstContactUnix else {
-            return details.speedMinutesOccupied ? details.speedMinutes : nil
+            let minutes = details.speedMinutesOccupied ? details.speedMinutes : nil
+            let workMinutes = details.speedWorkMinutesOccupied ? details.speedWorkMinutes : nil
+            return (minutes, workMinutes)
         }
 
         let minutes: Int?
@@ -400,10 +427,12 @@ public enum KommoService {
             minutes = computed
         }
 
+        let workMinutes: Int?
         if details.speedWorkMinutesOccupied {
             // Already set — leave it, matching Windows' "keep whatever's there" branch.
+            workMinutes = details.speedWorkMinutes
         } else if details.contactId != nil || details.companyId != nil {
-            _ = await trySetLocalTimeProcessingSpeed(
+            workMinutes = await trySetLocalTimeProcessingSpeed(
                 baseURL: baseURL, token: token, leadId: leadId,
                 contactId: details.contactId, companyId: details.companyId,
                 leadCreatedAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
@@ -411,9 +440,10 @@ public enum KommoService {
             )
         } else {
             print("[KommoService] ⚠️ лід \(leadId) без прив'язаного контакту чи компанії — поле 'робочий час' не заповнено.")
+            workMinutes = nil
         }
 
-        return minutes
+        return (minutes, workMinutes)
     }
 
     /// Windows parity source: `KommoService.TrySetLocalTimeProcessingSpeedAsync`.

@@ -2,20 +2,24 @@ import Foundation
 
 /// Background delivery queue for missed-call reports — posts the Kommo note
 /// (+ call metadata: first-contact date/processing speed/call-type/Nedozvon
-/// status advance, via `KommoService.applyCallMetadata`) for every submitted
-/// `MissedCallReportData`, retrying on a 10s tick until it succeeds. Windows
-/// parity source: `Services/Upload/MissedCallDeliveryService.cs`, scoped
-/// down to a **Kommo-only** leg:
+/// status advance, via `KommoService.applyCallMetadata`) and, independently,
+/// appends a row to the user's configured Google Sheet, for every submitted
+/// `MissedCallReportData`, retrying on a 10s tick until both legs succeed.
+/// Windows parity source: `Services/Upload/MissedCallDeliveryService.cs`'s
+/// `DeliverAsync`.
 ///
-/// - No Google Sheets leg (`BuildSheetRow`/`RecalculateProcessingSpeedAsync`)
-///   — mac has no Sheets integration at all yet (same gap already tracked
-///   for recordings, see project status notes); an entry here is considered
-///   fully delivered once the Kommo note succeeds, not "Kommo AND Sheets"
-///   like Windows.
-/// - No `DeliveryStatusChanged` event — `MissedCallHistory
-///   .markKommoDelivered` posts `didChangeNotification` itself, which
-///   `MissedCallsView` already observes the same way `RecordingsView`
-///   observes `RecordingHistory`.
+/// Phase 15: the Sheets leg that used to be entirely absent here now mirrors
+/// Windows almost exactly — `kommoDelivered`/`sheetDelivered` are tracked
+/// independently on each `PendingMissedCall` (see that type's doc comment),
+/// an entry only leaves the queue once Kommo is delivered AND (Sheets is
+/// disabled/unconfigured OR Sheets is also delivered), and processing-speed
+/// values computed by the Kommo leg are cached and threaded into the Sheets
+/// row rather than being silently dropped.
+///
+/// Still not ported: Windows' `DeliveryStatusChanged` event — Mac keeps
+/// using `MissedCallHistory.markKommoDelivered`/`markSheetDelivered`
+/// posting `didChangeNotification` directly, same as before, since
+/// `MissedCallsView` already observes that.
 ///
 /// Otherwise mirrors `PendingUploadRetryService`'s exact ticker shape (plain
 /// `Task` loop, 10s `Task.sleep`, no `Timer`/`Interlocked` reentrancy guard
@@ -76,7 +80,8 @@ public final class MissedCallDeliveryService {
     /// Enqueues a submitted report for delivery and immediately attempts it
     /// once (Windows parity: `SubmitAsync`'s "add, save, then try right
     /// away" ordering) — the 10s tick only exists to catch attempts that
-    /// fail this first try (network hiccup, Kommo not reachable yet, etc.).
+    /// fail this first try (network hiccup, Kommo/Sheets not reachable yet,
+    /// etc.).
     public func submit(id: UUID, data: MissedCallReportData) {
         let item = PendingMissedCall(
             id: id,
@@ -84,7 +89,8 @@ public final class MissedCallDeliveryService {
             note: data.formatCaption(),
             callType: data.callType,
             missedAt: data.firstContactTime,
-            manager: data.manager
+            manager: data.manager,
+            screenshotUrlsByMessenger: data.screenshotUrlsByMessenger
         )
         lock.lock()
         _pending.append(item)
@@ -92,7 +98,7 @@ public final class MissedCallDeliveryService {
         lock.unlock()
         MissedCallDeliveryService.store.scheduleSave(snapshot)
 
-        Task { await attemptDelivery(item) }
+        Task { await attemptDelivery(item, isFirstAttempt: true) }
     }
 
     // Swift 6: `NSLock.lock()`/`unlock()` are unavailable to call directly
@@ -125,40 +131,104 @@ public final class MissedCallDeliveryService {
     private func tick() async {
         let snapshot = snapshotPending()
         for item in snapshot {
-            await attemptDelivery(item)
+            await attemptDelivery(item, isFirstAttempt: false)
         }
     }
 
-    private func attemptDelivery(_ item: PendingMissedCall) async {
+    /// Windows parity source: `DeliverAsync`. `isFirstAttempt` only gates
+    /// whether a failure gets reported via `ErrorReporter` (same "don't spam
+    /// the developer chat on every 10s retry, only the first time" reasoning
+    /// as Windows' own `isFirstAttempt` check).
+    private func attemptDelivery(_ item: PendingMissedCall, isFirstAttempt: Bool) async {
         guard beginInFlight(item.id) else { return }
         defer { endInFlight(item.id) }
 
-        // Same "not configured/not enabled" opt-in-automation shape as
-        // UploadOrchestrator.attemptKommo (Phase 12: isKommoEnabled gates
-        // this too, not just presence of subdomain/token) — but here
-        // there's nothing else this entry could deliver to, so staying
-        // queued is the only outcome until Kommo gets configured and
-        // switched on (or forever, if it never is — same accepted gap as a
-        // recording whose Kommo note never posts).
-        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil, AppSettings.shared.isKommoEnabled else { return }
+        var kommoOk = item.kommoDelivered
+        var speedMinutes = item.processingSpeedMinutes
+        var speedWorkMinutes = item.processingSpeedWorkMinutes
 
-        let noteId: Int64?
-        do {
-            noteId = try await KommoService.addNote(crmUrl: item.crmUrl, text: item.note)
-        } catch {
-            print("[MissedCallDeliveryService] ❌ не вдалося додати нотатку в Kommo для пропущеного дзвінка \(item.id): \(error)")
-            return
+        if !kommoOk {
+            // Same "not configured/not enabled" opt-in-automation shape as
+            // UploadOrchestrator.attemptKommo (Phase 12: isKommoEnabled
+            // gates this too, not just presence of subdomain/token) — stays
+            // queued until Kommo gets configured and switched on.
+            guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil, AppSettings.shared.isKommoEnabled else {
+                return
+            }
+            do {
+                let noteId = try await KommoService.addNote(crmUrl: item.crmUrl, text: item.note)
+                guard noteId != nil else {
+                    print("[MissedCallDeliveryService] ❌ Kommo не повернув id нотатки для пропущеного дзвінка \(item.id) — лишаю в черзі.")
+                    if isFirstAttempt {
+                        await ErrorReporter.shared.report(category: "MISSED_CALL", message: "Не вдалося зафіксувати недодзвон у Kommo (немає id нотатки). Спробуємо ще раз у фоні.")
+                    }
+                    return
+                }
+                let speeds = await KommoService.applyCallMetadata(crmUrl: item.crmUrl, callStartTime: item.missedAt, callType: item.callType)
+                speedMinutes = speeds.speedMinutes
+                speedWorkMinutes = speeds.speedWorkMinutes
+                kommoOk = true
+                MissedCallHistory.shared.markKommoDelivered(id: item.id)
+            } catch {
+                print("[MissedCallDeliveryService] ❌ не вдалося додати нотатку в Kommo для пропущеного дзвінка \(item.id): \(error)")
+                if isFirstAttempt {
+                    await ErrorReporter.shared.report(category: "MISSED_CALL", message: "Не вдалося зафіксувати недодзвон у Kommo. Спробуємо ще раз у фоні.", error: error)
+                }
+                return
+            }
         }
-        guard noteId != nil else {
-            print("[MissedCallDeliveryService] ❌ Kommo не повернув id нотатки для пропущеного дзвінка \(item.id) — лишаю в черзі.")
-            return
+
+        let needSheet = AppSettings.shared.isGoogleSheetsEnabled
+            && !(AppSettings.shared.googleSheetsId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        var sheetOk = item.sheetDelivered || !needSheet
+
+        // Backfill: Kommo succeeded (now or on an earlier attempt) but at
+        // least one speed value is still missing (e.g. the lead's
+        // contact/company wasn't linked yet when the note first posted) —
+        // re-derive just the speed fields via the lighter recalculate path
+        // before building the Sheets row, same as Windows'
+        // `RecalculateProcessingSpeedAsync` call.
+        if kommoOk, needSheet, !item.sheetDelivered, speedMinutes == nil || speedWorkMinutes == nil {
+            let recalculated = await KommoService.recalculateProcessingSpeed(crmUrl: item.crmUrl, callStartTime: item.missedAt)
+            speedMinutes = speedMinutes ?? recalculated.speedMinutes
+            speedWorkMinutes = speedWorkMinutes ?? recalculated.speedWorkMinutes
         }
 
-        await KommoService.applyCallMetadata(crmUrl: item.crmUrl, callStartTime: item.missedAt, callType: item.callType)
+        var sheetWarning: String?
+        if kommoOk, needSheet, !item.sheetDelivered {
+            let row = Self.buildSheetRow(
+                manager: item.manager, callType: item.callType, missedAt: item.missedAt,
+                speedMinutes: speedMinutes, speedWorkMinutes: speedWorkMinutes,
+                crmUrl: item.crmUrl, screenshotUrlsByMessenger: item.screenshotUrlsByMessenger
+            )
+            let result = await GoogleSheetsUploadService.appendRow(
+                spreadsheetId: AppSettings.shared.googleSheetsId ?? "",
+                sheetName: AppSettings.shared.googleSheetsTabName ?? "",
+                values: row
+            )
+            sheetOk = result.success
+            sheetWarning = result.error
+            if sheetOk {
+                MissedCallHistory.shared.markSheetDelivered(id: item.id)
+            } else {
+                print("[MissedCallDeliveryService] ⚠️ не вдалося продублювати пропущений дзвінок \(item.id) у Google Таблицю: \(sheetWarning ?? "невідома помилка").")
+                if isFirstAttempt {
+                    await ErrorReporter.shared.report(category: "MISSED_CALL_SHEET", message: "Недодзвон зафіксовано в Kommo, але не вдалося продублювати в Google Таблицю. Спробуємо ще раз у фоні.\n\(sheetWarning ?? "")")
+                }
+            }
+        }
 
-        MissedCallHistory.shared.markKommoDelivered(id: item.id)
-        removeFromQueue(item.id)
-        print("[MissedCallDeliveryService] ✅ пропущений дзвінок \(item.id) доставлено в Kommo.")
+        if kommoOk && sheetOk {
+            removeFromQueue(item.id)
+            print("[MissedCallDeliveryService] ✅ пропущений дзвінок \(item.id) повністю доставлено (Kommo\(needSheet ? " + Google Таблиця" : "")).")
+        } else {
+            var updated = item
+            updated.kommoDelivered = kommoOk
+            updated.sheetDelivered = sheetOk
+            updated.processingSpeedMinutes = speedMinutes
+            updated.processingSpeedWorkMinutes = speedWorkMinutes
+            replaceInQueue(updated)
+        }
     }
 
     private func removeFromQueue(_ id: UUID) {
@@ -167,6 +237,65 @@ public final class MissedCallDeliveryService {
         let snapshot = _pending
         lock.unlock()
         MissedCallDeliveryService.store.scheduleSave(snapshot)
+    }
+
+    private func replaceInQueue(_ updated: PendingMissedCall) {
+        lock.lock()
+        if let index = _pending.firstIndex(where: { $0.id == updated.id }) {
+            _pending[index] = updated
+        }
+        let snapshot = _pending
+        lock.unlock()
+        MissedCallDeliveryService.store.scheduleSave(snapshot)
+    }
+
+    // MARK: - Sheets row building (Windows parity: BuildSheetRow)
+
+    private static let ukrainianMonths = [
+        "Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень",
+        "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень"
+    ]
+
+    /// Windows parity source: `MissedCallDeliveryService.BuildSheetRow` —
+    /// same column order as `GoogleSheetsUploadService.sheetHeaders`. Uses
+    /// `Date()` (now) for the "Рік"/"День"/"Місяць"/"Час запису" columns —
+    /// same as Windows' `DateTime.Now` there, i.e. the moment the row is
+    /// written, not `missedAt`. The Ukrainian month name is nominative case
+    /// (a hardcoded array), NOT the standard `uk_UA` locale's genitive-case
+    /// month name — matching Windows' own `UkrainianMonths` array exactly
+    /// rather than "correcting" it to a locale-provided name.
+    private static func buildSheetRow(
+        manager: String, callType: String?, missedAt: Date,
+        speedMinutes: Int?, speedWorkMinutes: Int?, crmUrl: String,
+        screenshotUrlsByMessenger: [String: String]
+    ) -> [Any?] {
+        let now = Date()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        let year = calendar.component(.year, from: now)
+        let day = calendar.component(.day, from: now)
+        let month = calendar.component(.month, from: now)
+        let monthName = ukrainianMonths[month - 1]
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.dateFormat = "HH:mm:ss"
+        let timeString = timeFormatter.string(from: now)
+
+        let missedAtFormatter = DateFormatter()
+        missedAtFormatter.locale = Locale(identifier: "en_US_POSIX")
+        missedAtFormatter.dateFormat = "dd.MM.yyyy HH:mm:ss"
+        let missedAtString = missedAtFormatter.string(from: missedAt)
+
+        var row: [Any?] = [
+            year, day, monthName, timeString, manager, callType ?? "",
+            missedAtString, speedMinutes, speedWorkMinutes, crmUrl
+        ]
+        for messenger in MessengerDeepLinkProvider.supportedMessengers {
+            let url = screenshotUrlsByMessenger[messenger]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            row.append((url?.isEmpty ?? true) ? nil : url)
+        }
+        return row
     }
 
     /// Forces any pending debounced save to happen immediately — call

@@ -55,13 +55,22 @@ enum GoogleServiceAccountAuth {
         }
     }
 
+    // Phase 15 (Google Sheets): the scope used to be hardcoded to Drive
+    // (`.../auth/drive`) — GoogleSheetsUploadService needs a token scoped to
+    // `.../auth/spreadsheets` instead, same service account, different
+    // OAuth scope claim. Default keeps every existing call site (Drive)
+    // compiling unchanged.
+    static let driveScope = "https://www.googleapis.com/auth/drive"
+    static let sheetsScope = "https://www.googleapis.com/auth/spreadsheets"
+
     /// Reads `AppSecrets.googleServiceAccountJson`, builds+signs a JWT, and
-    /// exchanges it for an OAuth access token good for Drive API calls
-    /// (scope: `drive`, matching Windows' `DriveService.Scope.Drive`).
+    /// exchanges it for an OAuth access token good for API calls under
+    /// `scope` (defaults to Drive, matching Windows'
+    /// `DriveService.Scope.Drive`; pass `sheetsScope` for Sheets calls).
     /// Returns the raw bearer token string — no expiry-tracking/reuse yet,
     /// each call just fetches a fresh one; revisit with caching in Step 5.2
     /// if repeated calls in quick succession turn out to matter.
-    static func fetchAccessToken() async throws -> String {
+    static func fetchAccessToken(scope: String = driveScope) async throws -> String {
         let json = AppSecrets.googleServiceAccountJson
         guard !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let data = json.data(using: .utf8) else {
@@ -74,18 +83,18 @@ enum GoogleServiceAccountAuth {
             throw AuthError.invalidServiceAccountJSON
         }
 
-        let jwt = try signedJWT(clientEmail: account.clientEmail, privateKeyPEM: account.privateKey)
+        let jwt = try signedJWT(clientEmail: account.clientEmail, privateKeyPEM: account.privateKey, scope: scope)
         return try await exchangeForAccessToken(jwt: jwt)
     }
 
     // MARK: - JWT construction
 
-    private static func signedJWT(clientEmail: String, privateKeyPEM: String) throws -> String {
+    private static func signedJWT(clientEmail: String, privateKeyPEM: String, scope: String) throws -> String {
         let now = Int(Date().timeIntervalSince1970)
         let header: [String: Any] = ["alg": "RS256", "typ": "JWT"]
         let claims: [String: Any] = [
             "iss": clientEmail,
-            "scope": "https://www.googleapis.com/auth/drive",
+            "scope": scope,
             "aud": "https://oauth2.googleapis.com/token",
             "exp": now + 3600,
             "iat": now

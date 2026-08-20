@@ -89,6 +89,20 @@ public final class MissedCallHistory {
         }
     }
 
+    /// Phase 15: flips `sheetDelivered` once `MissedCallDeliveryService`
+    /// confirms the row was appended to the configured Google Sheet — mirrors
+    /// `markKommoDelivered` exactly, just for the independent Sheets leg.
+    /// Does NOT affect `statusText` (see `MissedCallEntry.sheetDelivered`'s
+    /// doc comment) — this is tracking-only, same as Windows.
+    public func markSheetDelivered(id: UUID) {
+        mutate { entries in
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+            guard !entries[index].sheetDelivered else { return false }
+            entries[index].sheetDelivered = true
+            return true
+        }
+    }
+
     /// Forces any pending debounced save to happen immediately — call
     /// before process exit, same reasoning as `RecordingHistory.flush()`.
     public func flush() {
