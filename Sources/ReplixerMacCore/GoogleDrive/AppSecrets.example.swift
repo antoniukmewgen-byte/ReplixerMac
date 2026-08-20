@@ -24,6 +24,28 @@ public enum AppSecrets {
     static let telegramApiId = 0
     static let telegramApiHash = ""
 
+    /// Separate developer-facing Telegram bot for `ErrorReporter`'s crash/
+    /// error reports — a plain Bot API bot token, NOT the my.telegram.org
+    /// application credentials above (those authenticate a user MTProto
+    /// session via TDLib). Windows parity: `AppSecrets.cs`'s
+    /// `ErrorBotToken`. `REPLIXER_ERROR_BOT_TOKEN` env var wins if set
+    /// (same pattern CI uses to inject the real token without committing
+    /// it); the constant fallback here is the one to hand-fill for a local
+    /// dev build. Empty means "not configured" — `ErrorReporter.send`
+    /// silently no-ops rather than failing.
+    static var errorBotToken: String {
+        if let envToken = ProcessInfo.processInfo.environment["REPLIXER_ERROR_BOT_TOKEN"], !envToken.isEmpty {
+            return envToken
+        }
+        return _errorBotToken
+    }
+    private static let _errorBotToken = ""
+
+    /// Windows parity: `AppSecrets.cs`'s `ErrorChatIds` — developer chat ids
+    /// that receive every error report. No env override (unlike the token,
+    /// these aren't secret).
+    static let errorChatIds: [Int64] = []
+
     /// Named Telegram send destinations shown in `ProfileView`'s chat
     /// picker. Windows parity: `AppSecrets.TelegramChats`, but the ids
     /// below are TDLib chat ids (conventionally `-100`-prefixed for

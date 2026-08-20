@@ -137,6 +137,15 @@ if let flagIndex = CommandLine.arguments.firstIndex(of: "--telegram-send-audio-s
     RunLoop.main.run()
 }
 
+if CommandLine.arguments.contains("--error-reporter-smoke-test") {
+    print("[\(timestamp())] Крок Phase 14: смоук-тест ErrorReporter — надсилає тестовий звіт через реальний код (report/formatMessage/send), а не голий curl.")
+    Task {
+        await ErrorReporterSmokeTest.run()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--gdrive-folder-access-smoke-test") {
     print("[\(timestamp())] Крок Phase 5.1: смоук-тест доступу до Google Drive (service account JWT + перевірка теки).")
     Task {

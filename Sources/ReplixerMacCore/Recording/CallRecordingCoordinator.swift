@@ -90,6 +90,10 @@ public actor CallRecordingCoordinator {
 
         guard let processObjectID = ProcessTapSmokeTest.findProcessObjectID(for: messenger) else {
             print("[CallRecordingCoordinator] ❌ не знайшов \(messenger.rawValue) у CoreAudio-процесах на старті дзвінка.")
+            // Non-async context (actor's non-async func) — same `Task { await
+            // … }` escape hatch used everywhere else this actor needs to
+            // reach an `async` API without itself becoming `async`.
+            Task { await ErrorReporter.shared.report(category: "RECORDING_START", message: "Не знайшов \(messenger.rawValue) у CoreAudio-процесах на старті дзвінка.") }
             return
         }
 
@@ -181,12 +185,14 @@ public actor CallRecordingCoordinator {
             try FileNaming.ensureRecordingsDirectoryExists()
         } catch {
             print("[CallRecordingCoordinator] ❌ не вдалося створити теку записів: \(error)")
+            Task { await ErrorReporter.shared.report(category: "RECORDING_START", message: "Не вдалося створити теку записів.", error: error) }
             return false
         }
 
         let outputURL = FileNaming.recordingURL(platform: platform)
         guard AudioMixerEncoder.start(processObjectID: processObjectID, outputURL: outputURL) else {
             print("[CallRecordingCoordinator] ❌ не вдалося почати запис.")
+            Task { await ErrorReporter.shared.report(category: "RECORDING_START", message: "Не вдалося почати запис (\(platform)) — AudioMixerEncoder.start повернув false.") }
             return false
         }
 
@@ -755,6 +761,7 @@ public actor CallRecordingCoordinator {
             return nil
         } catch {
             print("[CallRecordingCoordinator] ❌ авторизація Telegram провалилась: \(error)")
+            await ErrorReporter.shared.report(category: "TELEGRAM_AUTH", message: "Авторизація Telegram (TDLib) провалилась.", error: error)
             return nil
         }
         telegramAuthClient = newClient

@@ -48,6 +48,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Phase 14: catch what we can of "this process is about to die"
+        // before anything else runs — installed first so it's live for the
+        // whole rest of startup, not just the code below it. Covers only
+        // Objective-C NSExceptions (AppKit-adjacent crashes); Swift's own
+        // fatal traps (force-unwrap, array-out-of-bounds, …) have no
+        // interception point in pure Swift — see ErrorReporter's doc
+        // comment for why that gap is accepted rather than chased with a
+        // hand-rolled signal handler. `persistCrashSynchronously` writes
+        // straight to disk (no actor hop, no network attempt) so the write
+        // survives even though the process is already unwinding.
+        NSSetUncaughtExceptionHandler { exception in
+            ErrorReporter.persistCrashSynchronously(
+                category: "CRASH_FATAL",
+                message: exception.name.rawValue,
+                detail: "\(exception.reason ?? "")\n\(exception.callStackSymbols.joined(separator: "\n"))")
+        }
+        Task { await ErrorReporter.shared.start() }
+
         // Phase 11.2: publish the running app's coordinator instance for
         // HomeView's manual start/stop button — see
         // CallRecordingCoordinator.appInstance's doc comment.
@@ -96,6 +114,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let reconciledCount = RecordingHistory.shared.reconcileDanglingRecordings()
         if reconciledCount > 0 {
             print("[ReplixerMacApp] ⚠️ Знайдено \(reconciledCount) запис(ів) історії, залишених у статусі \"recording\" після аварійного завершення — позначено як \"error\".")
+            // Phase 14: this reconciliation finding anything at all is the
+            // clearest signal available on Mac that the *previous* run
+            // crashed mid-recording (see ErrorReporter's doc comment) —
+            // there's no exception object to attach, just this fact itself.
+            // Synchronous persist, not `report()`: ErrorReporter.shared
+            // .start() above hasn't necessarily finished its actor hop yet,
+            // and this path costs nothing extra to make crash-safe too.
+            ErrorReporter.persistCrashSynchronously(
+                category: "CRASH_STARTUP",
+                message: "Попередній запуск завершився аварійно під час запису — \(reconciledCount) запис(ів) позначено як \"error\" при реконсиляції історії.")
         }
 
         // Phase 11.1: no longer a direct pass-through — CallMonitor's
@@ -208,6 +236,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         MissedCallDeliveryService.shared.stop()
         Task { [coordinator] in
             await coordinator.shutdown()
+            await ErrorReporter.shared.stop()
             AppSettings.shared.flush()
             RecordingHistory.shared.flush()
             MissedCallHistory.shared.flush()

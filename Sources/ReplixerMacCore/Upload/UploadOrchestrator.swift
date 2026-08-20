@@ -199,6 +199,7 @@ enum UploadOrchestrator {
             return (link, false)
         } catch {
             print("[UploadOrchestrator] ❌ не вдалося завантажити запис у Google Drive: \(error)")
+            await ErrorReporter.shared.report(category: "UPLOAD_DRIVE", message: "Не вдалося завантажити запис у Google Drive.", error: error)
             return (nil, true)
         }
     }
@@ -253,6 +254,7 @@ enum UploadOrchestrator {
             return (messageId, false)
         } catch {
             print("[UploadOrchestrator] ❌ не вдалося надіслати запис у Telegram: \(error)")
+            await ErrorReporter.shared.report(category: "UPLOAD_TELEGRAM", message: "Не вдалося надіслати запис у Telegram.", error: error)
             return (nil, true)
         }
     }
@@ -310,6 +312,7 @@ enum UploadOrchestrator {
             return noteId
         } catch {
             print("[UploadOrchestrator] ❌ не вдалося додати нотатку в Kommo: \(error)")
+            await ErrorReporter.shared.report(category: "UPLOAD_KOMMO", message: "Не вдалося додати нотатку в Kommo.", error: error)
             return nil
         }
     }
