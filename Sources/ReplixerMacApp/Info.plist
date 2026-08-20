@@ -26,9 +26,9 @@
     <!-- TelegramUploadService.appVersion reads this back via
          Bundle.main.infoDictionary — keep the two in sync when bumping. -->
     <key>CFBundleShortVersionString</key>
-    <string>0.2.3</string>
+    <string>0.2.4</string>
     <key>CFBundleVersion</key>
-    <string>5</string>
+    <string>6</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <!-- Phase 13.4 — app icon, ported straight from Windows' Assets/Icons/
