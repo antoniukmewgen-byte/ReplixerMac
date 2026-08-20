@@ -235,6 +235,16 @@ public final class AppSettings: Codable {
         didSet { AppSettings.store.scheduleSave(self) }
     }
 
+    // Windows parity: `AppSettings.IsNotificationsEnabled` — gates
+    // `NotificationService`'s toast stack (see NotificationService.swift).
+    // Defaults to true, matching Windows' own default and this field's
+    // "opt-out, not opt-in" framing (toasts are a UX nicety on by default,
+    // not a per-integration credential a fresh install has nothing
+    // configured for).
+    public var isNotificationsEnabled: Bool {
+        didSet { AppSettings.store.scheduleSave(self) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case managerName
         case telegramChatId
@@ -258,9 +268,10 @@ public final class AppSettings: Codable {
         case googleSheetsId
         case googleSheetsTabName
         case isSheetsConnected
+        case isNotificationsEnabled
     }
 
-    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, telegramPhone: String? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60, isGoogleSheetsEnabled: Bool = false, googleSheetsId: String? = nil, googleSheetsTabName: String? = nil, isSheetsConnected: Bool = false) {
+    private init(managerName: String, telegramChatId: Int64? = nil, telegramTopicId: Int? = nil, telegramPhone: String? = nil, isTelegramEnabled: Bool = true, googleDriveFolderId: String? = nil, googleDriveUserFolderId: String? = nil, isGoogleDriveEnabled: Bool = true, isDriveConnected: Bool = false, isSetupComplete: Bool = false, isAutoStartEnabled: Bool = false, position: String = "Менеджер", kommoSubdomain: String? = nil, kommoApiToken: String? = nil, isKommoEnabled: Bool = true, isKommoConnected: Bool = false, workDayStartMinutes: Int = 9 * 60, workDayEndMinutes: Int = 21 * 60, isGoogleSheetsEnabled: Bool = false, googleSheetsId: String? = nil, googleSheetsTabName: String? = nil, isSheetsConnected: Bool = false, isNotificationsEnabled: Bool = true) {
         self.managerName = managerName
         self.telegramChatId = telegramChatId
         self.telegramTopicId = telegramTopicId
@@ -283,6 +294,7 @@ public final class AppSettings: Codable {
         self.googleSheetsId = googleSheetsId
         self.googleSheetsTabName = googleSheetsTabName
         self.isSheetsConnected = isSheetsConnected
+        self.isNotificationsEnabled = isNotificationsEnabled
     }
 
     public required init(from decoder: Decoder) throws {
@@ -327,6 +339,7 @@ public final class AppSettings: Codable {
         googleSheetsId = try container.decodeIfPresent(String.self, forKey: .googleSheetsId)
         googleSheetsTabName = try container.decodeIfPresent(String.self, forKey: .googleSheetsTabName)
         isSheetsConnected = try container.decodeIfPresent(Bool.self, forKey: .isSheetsConnected) ?? false
+        isNotificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .isNotificationsEnabled) ?? true
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -353,6 +366,7 @@ public final class AppSettings: Codable {
         try container.encode(googleSheetsId, forKey: .googleSheetsId)
         try container.encode(googleSheetsTabName, forKey: .googleSheetsTabName)
         try container.encode(isSheetsConnected, forKey: .isSheetsConnected)
+        try container.encode(isNotificationsEnabled, forKey: .isNotificationsEnabled)
     }
 
     private static func load() -> AppSettings {

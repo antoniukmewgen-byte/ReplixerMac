@@ -257,6 +257,13 @@ struct ContentView: View {
         .onAppear {
             refreshActiveCallSheet()
         }
+        // Windows parity: the toast stack floats bottom-right over the
+        // whole window, independent of sidebar/detail selection — an
+        // overlay on the root NavigationSplitView, not something threaded
+        // into each individual screen.
+        .overlay(alignment: .bottomTrailing) {
+            ToastStackView()
+        }
     }
 
     @ViewBuilder

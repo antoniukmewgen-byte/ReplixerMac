@@ -646,6 +646,19 @@ public actor CallRecordingCoordinator {
             telegramFailed: result.telegramFailed,
             kommoNoteId: result.kommoNoteId
         )
+
+        // Windows parity: `HomeViewModel.cs:651`/`:656` — success toast when
+        // every attempted leg landed, or a warning toast naming which one(s)
+        // didn't (they'll be picked up later by `retryPendingUploads()`
+        // rather than lost).
+        if result.driveFailed || result.telegramFailed {
+            var failedParts: [String] = []
+            if result.driveFailed { failedParts.append("Google Drive") }
+            if result.telegramFailed { failedParts.append("Telegram") }
+            NotificationService.showError("Запис збережено, але не всі сервіси спрацювали: \(failedParts.joined(separator: ", ")).")
+        } else {
+            NotificationService.showSuccess("Запис збережено та відправлено.")
+        }
     }
 
     /// Phase 6: re-attempts Drive/Telegram for any recording whose last
@@ -730,6 +743,8 @@ public actor CallRecordingCoordinator {
 
             if !result.driveFailed && !result.telegramFailed {
                 print("[CallRecordingCoordinator] ✅ фоновий retry доробив запис \(fileName).")
+                // Windows parity: `PendingUploadRetryService.cs:145`.
+                NotificationService.showSuccess("Запис, який раніше не вдалося відправити, тепер успішно доставлено.")
             }
 
             RecordingHistory.shared.endBackgroundRetry(id: entry.id)

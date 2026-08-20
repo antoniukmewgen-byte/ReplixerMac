@@ -221,6 +221,12 @@ public final class MissedCallDeliveryService {
         if kommoOk && sheetOk {
             removeFromQueue(item.id)
             print("[MissedCallDeliveryService] ✅ пропущений дзвінок \(item.id) повністю доставлено (Kommo\(needSheet ? " + Google Таблиця" : "")).")
+            // Windows parity: `MissedCallDeliveryService.cs:161`.
+            if isFirstAttempt {
+                NotificationService.showSuccess("Недодзвон успішно зафіксовано.")
+            } else {
+                NotificationService.showSuccess("Недодзвон, який раніше не вдалося зафіксувати, тепер успішно доставлено.")
+            }
         } else {
             var updated = item
             updated.kommoDelivered = kommoOk

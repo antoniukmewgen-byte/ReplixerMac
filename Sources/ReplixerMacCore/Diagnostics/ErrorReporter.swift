@@ -110,6 +110,12 @@ public actor ErrorReporter {
     /// failure (no network, bad token, Telegram API error) the report is
     /// queued to disk instead of being lost, same as Windows.
     public func report(category: String, message: String, error: Swift.Error? = nil) async {
+        // Windows parity: `ErrorReporter.cs:41` calls `NotificationService
+        // .ShowError` inside `Report`, unconditionally — the toast fires
+        // regardless of whether the report itself sends immediately or
+        // ends up queued below.
+        NotificationService.showError(message)
+
         let entry = QueuedError(
             timestamp: Date(),
             user: AppSettings.shared.managerName,

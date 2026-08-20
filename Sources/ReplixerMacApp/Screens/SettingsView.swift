@@ -9,12 +9,11 @@ import ReplixerMacCore
 /// `IsNotificationsEnabled`, `WorkDayStart`/`WorkDayEnd` here too; mac
 /// `AppSettings` deliberately had none of those fields until Phase 8 gave
 /// `IsAutoStartEnabled` a real backend (`AutoStartManager`/`SMAppService`) —
-/// see the "Запуск" section below, and Phase 10.1c gave `WorkDayStart`/
+/// see the "Запуск" section below, Phase 10.1c gave `WorkDayStart`/
 /// `WorkDayEnd` one too (`KommoService`'s working-hours processing-speed
-/// field — see the "Робочий час" section). `IsNotificationsEnabled` still
-/// has no real behavior to drive (no notification-sending path exists yet),
-/// so that one stays cut for now, same don't-add-a-field-before-the-phase-
-/// that-uses-it stance.
+/// field — see the "Робочий час" section), and the toast/notification pass
+/// gave `IsNotificationsEnabled` one too (`NotificationService`/`ToastStore`
+/// — see the "Сповіщення" section).
 ///
 /// Telegram's `telegramChatId`/`TopicId` and Google Drive's
 /// `googleDriveFolderId` get their own UI on `ProfileView` (Phase 7.6), not
@@ -57,6 +56,12 @@ struct SettingsView: View {
     // conversion at the boundary.
     @State private var workDayStart: Date = SettingsView.workDayDate(fromMinutes: AppSettings.shared.workDayStartMinutes)
     @State private var workDayEnd: Date = SettingsView.workDayDate(fromMinutes: AppSettings.shared.workDayEndMinutes)
+
+    // Toast/notification pass: Windows parity `AppSettings.IsNotificationsEnabled`
+    // — gates NotificationService.showSuccess/showError entirely (see that
+    // type's doc comment), so this toggle is the one on-screen control for
+    // whether the toast stack ever appears at all.
+    @State private var isNotificationsEnabled: Bool = AppSettings.shared.isNotificationsEnabled
 
     var body: some View {
         Form {
@@ -113,6 +118,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Label("Робочий час", systemImage: "clock.fill")
+            }
+
+            Section {
+                Toggle("Показувати сповіщення про збереження та помилки", isOn: $isNotificationsEnabled)
+                    .onChange(of: isNotificationsEnabled) { _, newValue in
+                        AppSettings.shared.isNotificationsEnabled = newValue
+                    }
+            } header: {
+                Label("Сповіщення", systemImage: "bell.badge.fill")
             }
 
             Section {
