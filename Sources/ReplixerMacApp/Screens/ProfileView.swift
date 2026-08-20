@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ReplixerMacCore
 
 /// Phase 7.6 — Windows parity source: `ProfileViewModel` (486 lines), scoped
@@ -328,6 +329,25 @@ struct ProfileView: View {
             } header: {
                 Label("Google Sheets", systemImage: "tablecells.fill")
             }
+
+            // Windows parity: `ProfileViewModel.ClearAllDataCommand` /
+            // ProfilePage's "Небезпечна зона" card. Actual wipe logic lives
+            // in `AccountReset.clearAllData()` (ReplixerMacCore) — this
+            // section only owns the confirmation + relaunch, both of which
+            // are UI/app-lifecycle concerns.
+            Section {
+                Text("Видалить збережені підключення (Google Drive, Telegram, Kommo, Google Таблиці), сесію Telegram та історію записів, і перезапустить застосунок для повторного налаштування. Самі аудіофайли записів не видаляються.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button(role: .destructive) {
+                    confirmClearAllData()
+                } label: {
+                    Text("Очистити всі дані")
+                }
+            } header: {
+                Label("Небезпечна зона", systemImage: "exclamationmark.triangle.fill")
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Профіль")
@@ -488,5 +508,50 @@ struct ProfileView: View {
                 sheetsTestResult = .success("Доступ підключено")
             }
         }
+    }
+
+    // Windows parity: `ClearAllData()`'s blocking `MessageBox.Show`
+    // (Yes/No, Warning icon) — same native, synchronous-feeling confirmation
+    // via `NSAlert.runModal()` rather than this app's own sheet-based
+    // `Dialogs` system, matching how narrowly-scoped/rare this action is.
+    // `Скасувати` is added first (and so becomes the Return-key default,
+    // matching Apple's HIG for destructive confirmations — the safe choice
+    // should be what a stray Return keypress triggers), `Очистити` second
+    // with `hasDestructiveAction` so AppKit renders it in the red/prominent
+    // destructive style.
+    private func confirmClearAllData() {
+        let alert = NSAlert()
+        alert.messageText = "Видалити всі дані"
+        alert.informativeText = "Це видалить усі дані та перезапустить додаток для повторного налаштування. Продовжити?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Скасувати")
+        let confirmButton = alert.addButton(withTitle: "Очистити")
+        confirmButton.hasDestructiveAction = true
+
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        performClearAllData()
+    }
+
+    // Windows parity order: reset data first, THEN start the fresh instance,
+    // THEN shut the current one down — same sequencing as `ClearAllData()`'s
+    // `Process.Start(exe)` immediately followed by `Application.Shutdown()`.
+    private func performClearAllData() {
+        AccountReset.clearAllData()
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        // A second instance, not "just bring the existing one back" — the
+        // current process is about to terminate anyway, and Windows'
+        // `Process.Start(exe)` has the exact same "cold, no-arguments
+        // relaunch" semantics.
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+
+        // Same full-termination path Cmd+Q/Dock-quit/`StatusItemController
+        // .quit()` already use — `AppDelegate.applicationShouldTerminate`
+        // still runs its graceful shutdown (stop services, flush stores)
+        // before the process actually exits, matching Windows'
+        // `Application.Current.Dispatcher.Invoke(() => Application.Current
+        // .Shutdown())`.
+        NSApp.terminate(nil)
     }
 }
