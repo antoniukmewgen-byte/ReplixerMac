@@ -218,6 +218,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // "start once at launch, stop on quit" lifecycle as
         // pendingUploadRetryService above.
         MissedCallDeliveryService.shared.start()
+
+        // Windows parity: `App.xaml.cs`'s `ShowMissedCallReminder()` call,
+        // gated the same way Windows gates its whole `ShowMainWindow()` —
+        // only fires here if setup was already complete *before* this
+        // launch. A fresh install (setup not yet done) instead gets it from
+        // `SetupWizardView`'s `onFinish` callback in `ContentView`, once
+        // the wizard itself sets `isSetupComplete = true`.
+        if AppSettings.shared.isSetupComplete {
+            MissedCallReminderWindowController.shared.show()
+        }
     }
 
     /// Phase 13.3 — makes the main window's red ✕ a full quit instead of

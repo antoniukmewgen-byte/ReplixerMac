@@ -207,8 +207,17 @@ struct ContentView: View {
         // swiped/Esc-dismissed without going through finish() (which is
         // what actually persists managerName + isSetupComplete).
         .sheet(isPresented: $showingSetupWizard) {
-            SetupWizardView(onFinish: { showingSetupWizard = false })
-                .interactiveDismissDisabled()
+            SetupWizardView(onFinish: {
+                showingSetupWizard = false
+                // Windows parity: mirrors `ShowMissedCallReminder()` being
+                // reachable from both `ShowMainWindow()` (setup already
+                // done) and `ShowSetupWindow()`'s own finish callback (setup
+                // just completed this run) — see
+                // `AppDelegate.applicationDidFinishLaunching`'s matching
+                // call for the other half of this gating.
+                MissedCallReminderWindowController.shared.show()
+            })
+            .interactiveDismissDisabled()
         }
         // Phase 10.0/11.1, unified Phase 11.3 (see `ActiveCallSheet`'s doc
         // comment above for why this used to be two separate `.sheet(item:)`
