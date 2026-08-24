@@ -85,6 +85,8 @@ public final class JSONStore<Value: Codable> {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
         } catch {
             print("[JSONStore] ⚠️ не вдалося зберегти \(url.lastPathComponent): \(error)")
+            let fileName = url.lastPathComponent
+            Task { await ErrorReporter.shared.report(category: "JSON_STORE", message: "Не вдалося зберегти \(fileName) на диск.", error: error) }
         }
     }
 }

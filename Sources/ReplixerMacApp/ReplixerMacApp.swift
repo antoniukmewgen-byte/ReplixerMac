@@ -16,6 +16,18 @@ import ReplixerMacCore
 /// remains useful as a UI-less runner/smoke-test harness) — the two aren't
 /// meant to run at the same time against the same user, same as Windows
 /// only ever running as a single instance.
+/// Windows parity: `UpdateService.cs` reports Sparkle-equivalent
+/// (Squirrel/NetSparkle-style) update-check/download failures to the same
+/// Telegram error channel every other operational failure goes to.
+/// `SPUStandardUpdaterController` otherwise leaves failures entirely silent
+/// on Mac — no delegate means Sparkle just logs to its own internal log and
+/// gives up, with nothing surfacing to the developer.
+private final class UpdaterErrorReporter: NSObject, SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        Task { await ErrorReporter.shared.report(category: "AUTO_UPDATE", message: "Sparkle: перевірка/завантаження оновлення перервано помилкою.", error: error) }
+    }
+}
+
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let coordinator = CallRecordingCoordinator()
     private let monitor = CallMonitor()
@@ -41,9 +53,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     // SwiftUI-app guidance — no separate `.startUpdater()` call needed.
     // Held strongly for the app's lifetime for the same reason
     // `statusItemController` is: nothing else keeps it alive.
-    private let updaterController = SPUStandardUpdaterController(
+    private let updaterErrorReporter = UpdaterErrorReporter()
+    private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
-        updaterDelegate: nil,
+        updaterDelegate: updaterErrorReporter,
         userDriverDelegate: nil
     )
 

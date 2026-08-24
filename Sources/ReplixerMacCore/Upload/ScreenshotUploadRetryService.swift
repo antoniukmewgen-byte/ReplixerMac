@@ -162,6 +162,7 @@ public final class ScreenshotUploadRetryService {
                     _ = try await KommoService.addNote(crmUrl: kommoLeadUrl, text: note)
                 } catch {
                     print("[ScreenshotUploadRetryService] ⚠️ скрін довантажено, але нотатку в Kommo додати не вдалось: \(error)")
+                    await ErrorReporter.shared.report(category: "SCREENSHOT_KOMMO", message: "Скрін (\(item.messenger)) довантажено на Drive, але нотатку в Kommo додати не вдалось.", error: error)
                 }
             }
 
@@ -169,6 +170,7 @@ public final class ScreenshotUploadRetryService {
         } catch {
             if isFirstAttempt {
                 print("[ScreenshotUploadRetryService] ⚠️ перша спроба довантажити скрін \(item.id) не вдалась: \(error)")
+                await ErrorReporter.shared.report(category: "SCREENSHOT_UPLOAD", message: "Не вдалося довантажити скріншот (\(item.messenger)). Спробуємо ще раз у фоні.", error: error)
             } else {
                 print("[ScreenshotUploadRetryService] ⚠️ повтор довантаження скрін \(item.id) не вдався: \(error)")
             }

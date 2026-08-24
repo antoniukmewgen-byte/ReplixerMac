@@ -116,6 +116,8 @@ public enum FileNaming {
                 print("[FileNaming] 🧹 видалив застарілий незавершений запис: \(url.lastPathComponent)")
             } catch {
                 print("[FileNaming] ⚠️ не вдалося видалити \(url.lastPathComponent): \(error)")
+                let fileName = url.lastPathComponent
+                Task { await ErrorReporter.shared.report(category: "FILE_CLEANUP", message: "Не вдалося видалити застарілий незавершений запис \(fileName).", error: error) }
             }
         }
     }

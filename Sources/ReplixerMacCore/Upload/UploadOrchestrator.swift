@@ -229,6 +229,7 @@ enum UploadOrchestrator {
             print("[UploadOrchestrator] ✅ підпис у Telegram доповнено посиланням на Google Drive.")
         } catch {
             print("[UploadOrchestrator] ⚠️ не вдалося дописати посилання на Google Drive у вже надіслане повідомлення Telegram: \(error)")
+            await ErrorReporter.shared.report(category: "TELEGRAM_CAPTION_PATCH", message: "Не вдалося дописати посилання на Google Drive у вже надіслане повідомлення Telegram (косметична правка, запис уже доставлено).", error: error)
         }
     }
 
@@ -325,8 +326,10 @@ enum UploadOrchestrator {
         // Recording uploads don't track processing-speed values anywhere
         // (no `crmUrl`/speed fields on `RecordingEntry` — that's a Sheets-
         // delivery-only concern, see `MissedCallDeliveryService`), so the
-        // tuple `applyCallMetadata` now returns is simply discarded here,
-        // same as before this became a non-`Void` return.
+        // tuple `applyCallMetadata` now returns is simply discarded here.
+        // Failures inside it aren't silently lost, though — each internal
+        // leg (`patchLeadField`/`patchLeadStatus`/`getLeadPipelineStatus`/
+        // `getPipelineStatusSortOrder`) reports to `ErrorReporter` itself.
         async let metadataTask = KommoService.applyCallMetadata(crmUrl: crmUrl, callStartTime: callStartedAt, callType: callType)
         let noteId = await noteTask
         _ = await metadataTask

@@ -111,6 +111,7 @@ public enum MissedCallQuickActionService {
             return .succeeded(driveUrl: driveUrl)
         } catch {
             ScreenshotUploadRetryService.shared.enqueue(localPath: filePath, folderId: folderId, messenger: messenger, kommoLeadUrl: trimmedCrmUrl)
+            await ErrorReporter.shared.report(category: "SCREENSHOT_UPLOAD", message: "Не вдалося одразу завантажити скріншот (\(messenger)) — поставлено у фонову чергу довантаження.", error: error)
             return .uploadFailed("\(error)")
         }
     }

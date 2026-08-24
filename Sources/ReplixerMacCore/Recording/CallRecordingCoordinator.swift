@@ -301,6 +301,7 @@ public actor CallRecordingCoordinator {
 
         guard let finalURL else {
             RecordingHistory.shared.markFailed(id: entryID)
+            await ErrorReporter.shared.report(category: "RECORDING_FINISH", message: "AudioMixerEncoder.stop() не повернув фінальний файл (\(platform)) — запис позначено як помилковий.")
             return
         }
 

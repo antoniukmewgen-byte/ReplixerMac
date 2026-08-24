@@ -59,6 +59,16 @@ public enum KommoService {
     private static let nedozvonStatusId: Int64 = 98056416
     private static let noCommunicationCallTypeMarker = "ще не було спілкування"
 
+    /// Funnels every genuine API/network failure below (HTTP non-2xx,
+    /// thrown exceptions) into the same Telegram error channel Windows'
+    /// `KommoService.cs` reports from directly at each call site (22
+    /// `ErrorReporter.Report` calls total) — deliberately excludes plain
+    /// data-absence branches (e.g. "phone not found on this lead") since
+    /// those are normal business outcomes, not operational errors.
+    private static func reportFailure(_ message: String, error: Swift.Error? = nil) async {
+        await ErrorReporter.shared.report(category: "KOMMO_API", message: message, error: error)
+    }
+
     /// Stand-in for `Swift.Result<String, String>`, same reasoning as
     /// `GoogleDriveFolderAccessSmokeTest.CheckOutcome` (a bare `String`
     /// failure can't satisfy `Result`'s `Error`-conforming `Failure`
@@ -274,9 +284,11 @@ public enum KommoService {
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
+                await reportFailure("Kommo editNote: HTTP \(status), лід \(leadId): \(bodyText)")
                 return "Kommo: помилка \(status): \(bodyText)"
             }
         } catch {
+            await reportFailure("Kommo editNote виняток, лід \(leadId)", error: error)
             return "Kommo: \(error)"
         }
 
@@ -650,6 +662,7 @@ public enum KommoService {
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 print("[KommoService] ❌ getEntityPhone(\(path)) HTTP \(status).")
+                await reportFailure("Kommo getEntityPhone(\(path)): HTTP \(status)")
                 return nil
             }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -681,6 +694,7 @@ public enum KommoService {
             return nil
         } catch {
             print("[KommoService] ❌ getEntityPhone(\(path)) виняток: \(error)")
+            await reportFailure("Kommo getEntityPhone(\(path)) виняток", error: error)
             return nil
         }
     }
@@ -713,6 +727,7 @@ public enum KommoService {
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 print("[KommoService] ❌ GetLeadDetails HTTP \(status) — лід \(leadId).")
+                await reportFailure("Kommo GetLeadDetails: HTTP \(status), лід \(leadId)")
                 return LeadDetails()
             }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -783,6 +798,7 @@ public enum KommoService {
             return details
         } catch {
             print("[KommoService] ❌ GetLeadDetails виняток — лід \(leadId): \(error)")
+            await reportFailure("Kommo GetLeadDetails виняток, лід \(leadId)", error: error)
             return LeadDetails()
         }
     }
@@ -822,10 +838,12 @@ public enum KommoService {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
                 print("[KommoService] ❌ PatchLeadField \(fieldId) HTTP \(status) — лід \(leadId): \(bodyText)")
+                await reportFailure("Kommo PatchLeadField \(fieldId): HTTP \(status), лід \(leadId): \(bodyText)")
                 return
             }
         } catch {
             print("[KommoService] ❌ PatchLeadField \(fieldId) виняток — лід \(leadId): \(error)")
+            await reportFailure("Kommo PatchLeadField \(fieldId) виняток, лід \(leadId)", error: error)
         }
     }
 
@@ -861,11 +879,15 @@ public enum KommoService {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                print("[KommoService] ❌ GetLeadPipelineStatus HTTP \(status) — лід \(leadId).")
+                await reportFailure("Kommo GetLeadPipelineStatus: HTTP \(status), лід \(leadId)")
                 return (nil, nil)
             }
             return ((json["pipeline_id"] as? NSNumber)?.int64Value, (json["status_id"] as? NSNumber)?.int64Value)
         } catch {
             print("[KommoService] ❌ GetLeadPipelineStatus виняток — лід \(leadId): \(error)")
+            await reportFailure("Kommo GetLeadPipelineStatus виняток, лід \(leadId)", error: error)
             return (nil, nil)
         }
     }
@@ -882,6 +904,9 @@ public enum KommoService {
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let embedded = json["_embedded"] as? [String: Any],
                   let statuses = embedded["statuses"] as? [[String: Any]] else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                print("[KommoService] ❌ GetPipelineStatusSortOrder HTTP \(status) — воронка \(pipelineId).")
+                await reportFailure("Kommo GetPipelineStatusSortOrder: HTTP \(status), воронка \(pipelineId)")
                 return nil
             }
             var result: [Int64: Int] = [:]
@@ -893,6 +918,7 @@ public enum KommoService {
             return result
         } catch {
             print("[KommoService] ❌ GetPipelineStatusSortOrder виняток — воронка \(pipelineId): \(error)")
+            await reportFailure("Kommo GetPipelineStatusSortOrder виняток, воронка \(pipelineId)", error: error)
             return nil
         }
     }
@@ -913,10 +939,12 @@ public enum KommoService {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 let bodyText = String(data: data, encoding: .utf8) ?? "<нечитабельно>"
                 print("[KommoService] ❌ PatchLeadStatus HTTP \(status) — лід \(leadId): \(bodyText)")
+                await reportFailure("Kommo PatchLeadStatus: HTTP \(status), лід \(leadId): \(bodyText)")
                 return
             }
         } catch {
             print("[KommoService] ❌ PatchLeadStatus виняток — лід \(leadId): \(error)")
+            await reportFailure("Kommo PatchLeadStatus виняток, лід \(leadId)", error: error)
         }
     }
 }

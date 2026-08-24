@@ -119,6 +119,7 @@ enum GoogleDriveUploadService {
             return folderId
         } catch {
             print("[GoogleDriveUploadService] ⚠️ не вдалося створити/знайти теку менеджера (\(error)), завантажую напряму у батьківську теку.")
+            await ErrorReporter.shared.report(category: "DRIVE_FOLDER", message: "Не вдалося створити/знайти теку менеджера '\(managerName)' — завантажую напряму у батьківську теку.", error: error)
             return parentId
         }
     }
@@ -138,6 +139,7 @@ enum GoogleDriveUploadService {
             return try await getOrCreateFolder(parentId: baseFolderId, name: "Screenshots", accessToken: accessToken)
         } catch {
             print("[GoogleDriveUploadService] ⚠️ не вдалося створити/знайти теку Screenshots (\(error)), завантажую напряму у \(baseFolderId).")
+            await ErrorReporter.shared.report(category: "DRIVE_FOLDER", message: "Не вдалося створити/знайти теку Screenshots — завантажую напряму у \(baseFolderId).", error: error)
             return baseFolderId
         }
     }

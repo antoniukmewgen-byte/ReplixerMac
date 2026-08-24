@@ -206,6 +206,7 @@ struct SettingsView: View {
         } catch {
             autoStartError = "Не вдалося змінити автозапуск: \(error)"
             isAutoStartEnabled = AppSettings.shared.isAutoStartEnabled
+            Task { await ErrorReporter.shared.report(category: "AUTOSTART", message: "Не вдалося \(enabled ? "увімкнути" : "вимкнути") автозапуск через SMAppService.", error: error) }
         }
     }
 
