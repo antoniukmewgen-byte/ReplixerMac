@@ -45,7 +45,7 @@ private final class UpdaterErrorReporter: NSObject, SPUUpdaterDelegate {
     }
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let coordinator = CallRecordingCoordinator()
     private let monitor = CallMonitor()
     private lazy var pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
@@ -130,26 +130,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // silent unless an update is actually found — unlike
         // `checkForUpdates(_:)`, which always surfaces a "checking..." UI.
         updaterController.updater.checkForUpdatesInBackground()
-
-        // Phase 13.3 — Windows parity: on Windows the main window's close
-        // button *is* a full quit (no separate "minimize to tray"
-        // affordance), and this app's default AppKit behavior for a
-        // `.regular` app's last window closing (just close/hide it — the
-        // process, menu-bar NSStatusItem, and now Dock icon all keep
-        // running, only reachable again via StatusItemController's
-        // "Відкрити ReplixerMac" item or the Dock icon) isn't what a red
-        // traffic-light ✕ means to a user. Deliberately kept even after the
-        // Dock icon was added (see `.setActivationPolicy(.regular)` above):
-        // apps silently continuing to run after their visible window
-        // closes are a common source of "why is this still using my mic"
-        // confusion regardless of whether a Dock icon is present to hint at
-        // it. So: become the delegate of the one-and-only
-        // WindowGroup-created window (same `NSApp.windows.first` "there's
-        // only ever one" assumption `StatusItemController.openMainWindow()`
-        // already relies on) and route its close button through the exact
-        // same full-termination path `StatusItemController.quit()` uses —
-        // see `windowShouldClose(_:)` below.
-        NSApp.windows.first?.delegate = self
 
         // Same startup sequence as ReplixerMacCallPoC/main.swift: sweep any
         // `.inprogress` file / dangling `.recording` history entry left by a
@@ -265,21 +245,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    /// Phase 13.3 — makes the main window's red ✕ a full quit instead of
-    /// AppKit's default accessory-app "just close/hide the window" behavior
-    /// (see the doc comment on the `NSApp.windows.first?.delegate = self`
-    /// line above for why). Returning `false` here means the ✕ click itself
-    /// never actually closes the window directly — instead `NSApp.terminate`
-    /// drives the *entire* shutdown, including this same window's closing,
-    /// through `applicationShouldTerminate(_:)` below, exactly like
-    /// Cmd+Q/Dock-quit/`StatusItemController.quit()` already do. Unreachable
-    /// while a sheet (`CallReportView`/`CallConfirmView`/
-    /// `MissedCallReportView`) is attached — AppKit disables a window's
-    /// close button for the whole time it has an attached sheet, so there's
-    /// no risk of this firing mid-dialog.
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.terminate(nil)
-        return false
+    /// A later ask (after Phase 13.3 briefly made the main window's red ✕ a
+    /// full quit, to match Windows' close-button-quits behavior) reverted to
+    /// standard macOS convention now that the app has a Dock icon
+    /// (`.setActivationPolicy(.regular)` above): closing the window just
+    /// closes/hides it — the process (menu-bar NSStatusItem + Dock icon)
+    /// keeps running, same as any ordinary Mac app. No `windowShouldClose`
+    /// override needed for that part, AppKit's default already does it;
+    /// this method only exists to say so explicitly rather than rely on the
+    /// undocumented default, since `.regular` apps auto-terminate on last-
+    /// window-close unless told otherwise. Reopening is `StatusItemController
+    /// .openMainWindow()` (menu-bar item) or clicking the Dock icon — the
+    /// latter is handled for free by SwiftUI's `WindowGroup`, which
+    /// recreates a window on reactivation if none are open.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     /// AppKit's async-shutdown hook: returning `.terminateLater` and calling
