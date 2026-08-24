@@ -16,13 +16,15 @@ import ReplixerMacCore
 /// probability reveals) — ported verbatim rather than simplified, per the
 /// explicit "full parity, Менеджер/Діагност/Кваліфікатор" instruction.
 ///
-/// No cancel button and `.interactiveDismissDisabled()` at the call site
-/// (`ContentView`) — matches Windows, which has no "dismiss without
-/// reporting" affordance here either. The only way this sheet closes
-/// without the user pressing "Відправити" is `CallReportRequestStore
-/// .interrupt()` (Phase 11.3) firing externally when a new call arrives —
-/// same as Windows' `ShowDialog` forcibly dismissing an open report, not a
-/// user-facing cancel.
+/// `.interactiveDismissDisabled()` at the call site (`ContentView`) blocks
+/// Esc/swipe-away, matching Windows — but the header's close (X) button
+/// gives the manager an explicit way out, a deliberate departure from
+/// Windows (which has no "dismiss without reporting" affordance at all). It
+/// reuses `CallReportRequestStore.interrupt()` (Phase 11.3), the same path
+/// that already fires externally when a new call arrives — so a manual
+/// close is safe: nothing typed is lost, it's saved as a resumable
+/// `.draft` recording entry (`CallRecordingCoordinator.finishRecording`'s
+/// `.interrupted` branch), reopenable later from the recordings list.
 struct CallReportView: View {
     let platform: String
     let duration: TimeInterval
@@ -125,6 +127,33 @@ struct CallReportView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            closeHeader
+            reportForm
+        }
+    }
+
+    // Close (X) button — mirrors WorldClockView's header-close idiom
+    // (xmark.circle.fill, .plain style, .tertiary color). Placed above the
+    // Form itself rather than as a `.toolbar` item since this sheet has no
+    // enclosing NavigationStack for a toolbar to attach to.
+    private var closeHeader: some View {
+        HStack {
+            Spacer()
+            Button(action: close) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Закрити (можна продовжити пізніше з історії записів)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+    }
+
+    private var reportForm: some View {
         // Design-only pass below: every Section header is now a `Label`
         // with an icon (same idiom as Settings/Profile), and the "orange"
         // warning colors moved to `Theme.Status.warning` — no Picker
@@ -311,6 +340,14 @@ struct CallReportView: View {
 
     private func submit() {
         CallReportRequestStore.shared.submit(buildReportData())
+    }
+
+    // Reuses the same `interrupt()` path `AppDelegate` fires when a new call
+    // preempts this one mid-report — see the doc comment above. Nothing is
+    // lost: `CallRecordingCoordinator.finishRecording`'s `.interrupted` branch
+    // persists whatever was captured as a resumable `.draft` history entry.
+    private func close() {
+        CallReportRequestStore.shared.interrupt()
     }
 
     private func pushLiveDraft() {

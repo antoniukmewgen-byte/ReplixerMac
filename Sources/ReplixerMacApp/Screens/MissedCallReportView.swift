@@ -15,10 +15,15 @@ import ReplixerMacCore
 /// `screenshotUrls`/`screenshotUrlsByMessenger` gets populated is a
 /// successful quick action.
 ///
-/// No cancel button, same reasoning as `CallReportView` — `ContentView`'s
-/// `.interactiveDismissDisabled()` blocks Esc/swipe-away; there's no
-/// Windows-side "close without reporting" affordance for this dialog either
-/// (its WPF host is a modal `Window.ShowDialog()`).
+/// `.interactiveDismissDisabled()` at the call site (`ContentView`) blocks
+/// Esc/swipe-away, matching Windows (whose WPF host is a modal
+/// `Window.ShowDialog()` with no dismiss-without-reporting affordance either)
+/// — but the header's close (X) button gives the manager an explicit way
+/// out, same deliberate mac-only departure as `CallReportView`'s. Unlike
+/// that form, there's no draft to preserve here (see
+/// `MissedCallReportRequestStore.close()`'s doc comment): closing just
+/// discards whatever call type/CRM link/quick-action screenshots were
+/// captured so far.
 struct MissedCallReportView: View {
     /// The moment "Не додзвонився" was clicked (`MissedCallReportRequestStore
     /// .PendingRequest.missedAt`) — default/fallback first-contact time, and
@@ -85,6 +90,33 @@ struct MissedCallReportView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            closeHeader
+            missedCallForm
+        }
+    }
+
+    // Close (X) button — same idiom as CallReportView's closeHeader
+    // (mirrors WorldClockView's header-close: xmark.circle.fill, .plain
+    // style, .tertiary color), placed above the Form rather than in a
+    // `.toolbar` since this sheet has no enclosing NavigationStack.
+    private var closeHeader: some View {
+        HStack {
+            Spacer()
+            Button(action: close) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Закрити (введені дані буде втрачено)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+    }
+
+    private var missedCallForm: some View {
         // Design-only pass below: `Label` section headers + Theme colors,
         // same as CallReportView's identical treatment — no field, gating
         // rule, or quick-action/submit logic changed.
@@ -290,5 +322,11 @@ struct MissedCallReportView: View {
             screenshotUrlsByMessenger: messengerScreenshotUrl
         )
         MissedCallReportRequestStore.shared.submit(data)
+    }
+
+    // Discards the in-progress form — see the type's doc comment on why
+    // there's nothing to preserve here (unlike CallReportView's close()).
+    private func close() {
+        MissedCallReportRequestStore.shared.close()
     }
 }

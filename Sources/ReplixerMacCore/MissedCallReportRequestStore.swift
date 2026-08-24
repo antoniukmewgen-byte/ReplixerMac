@@ -82,4 +82,20 @@ public final class MissedCallReportRequestStore {
         MissedCallDeliveryService.shared.submit(id: id, data: data)
         NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
     }
+
+    /// Called by `MissedCallReportView`'s close (X) button when the manager
+    /// dismisses the form without submitting — a deliberate mac-only
+    /// departure from Windows (which has no "close without reporting"
+    /// affordance on this dialog at all, see that view's doc comment).
+    /// Unlike `CallReportRequestStore.interrupt()`, there's nothing to
+    /// preserve as a resumable draft here: a missed-call report isn't backed
+    /// by any in-progress recording/history entry until `submit(_:)` writes
+    /// one, so closing just discards whatever was typed and clears the
+    /// pending request.
+    public func close() {
+        lock.lock()
+        _pending = nil
+        lock.unlock()
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
+    }
 }
