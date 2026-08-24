@@ -32,6 +32,15 @@
              Scripts/release.sh looks for it verbatim and inserts each new
              <item> immediately after it, so items stay newest-first). -->
 <item>
+    <title>Версія 1.0.4</title>
+    <pubDate>Mon, 24 Aug 2026 18:20:16 +0000</pubDate>
+    <sparkle:version>12</sparkle:version>
+    <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+    <description><![CDATA[<p>Версія 1.0.4.</p><p><b>Якщо після оновлення застосунок не відкриється автоматично: Системні налаштування → Конфіденційність і безпека → прокрутіть вниз до попередження про ReplixerMac → «Все одно відкрити». Це одноразово для кожної версії (поки немає платного Apple Developer ID).</b></p>]]></description>
+    <enclosure url="https://github.com/antoniukmewgen-byte/ReplixerMac/releases/download/v1.0.4/ReplixerMac-1.0.4.dmg" sparkle:edSignature="BZWZchMoqpov6CZIrT52xleQ42kWQ2zuBv5+nvItWIgHNxVGA29w2Zg4zpDWQrPIyr6ywHW2szHxLOGuuJNvAg==" length="71747613" type="application/octet-stream" />
+</item>
+<item>
     <title>Версія 1.0.3</title>
     <pubDate>Mon, 24 Aug 2026 17:58:43 +0000</pubDate>
     <sparkle:version>11</sparkle:version>
