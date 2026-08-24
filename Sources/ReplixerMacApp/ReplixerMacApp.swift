@@ -45,7 +45,7 @@ private final class UpdaterErrorReporter: NSObject, SPUUpdaterDelegate {
     }
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let coordinator = CallRecordingCoordinator()
     private let monitor = CallMonitor()
     private lazy var pendingUploadRetryService = PendingUploadRetryService(coordinator: coordinator)
@@ -128,6 +128,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // off here removes those items outright instead of leaving them
         // permanently disabled/no-op.
         NSWindow.allowsAutomaticWindowTabbing = false
+
+        // A prior version of this reasoned that AppKit's un-overridden
+        // default for a `.regular` app's window-close button already "just
+        // hides" the window, and only prevented the *app* from quitting on
+        // last-window-close (applicationShouldTerminateAfterLastWindowClosed
+        // below). That premise was wrong: the un-overridden default for
+        // `NSWindow.close()` actually *closes* (tears down) the window —
+        // AppKit relies on `WindowGroup` to transparently recreate a new one,
+        // but that recreation is only wired to the Dock icon's "reopen"
+        // event, not to anything StatusItemController's own "Відкрити" menu
+        // item can trigger, and not to `ContentView.refreshActiveCallSheet()`
+        // needing this exact window/view instance to still be alive to
+        // attach an incoming call's confirm/report sheet to. Symptom this
+        // caused: closing the window via the red ✕, then clicking "Відкрити"
+        // in the menu-bar menu, did nothing — `mainContentWindow` correctly
+        // found no window, because there genuinely was none left to find.
+        // Becoming the delegate of the one-and-only WindowGroup-created
+        // window (same "there's only ever one" assumption
+        // StatusItemController.openMainWindow() already relies on) and
+        // hiding it instead of letting it close — see `windowShouldClose(_:)`
+        // below — keeps that same window (and its live ContentView/sheet
+        // state) around for `openMainWindow()`/`refreshActiveCallSheet()` to
+        // find and re-show at any time, exactly what "просто ховає вікно"
+        // (just hides the window) actually requires.
+        NSApp.windows.first?.delegate = self
 
         statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
 
@@ -257,19 +282,30 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A later ask (after Phase 13.3 briefly made the main window's red ✕ a
-    /// full quit, to match Windows' close-button-quits behavior) reverted to
-    /// standard macOS convention now that the app has a Dock icon
-    /// (`.setActivationPolicy(.regular)` above): closing the window just
-    /// closes/hides it — the process (menu-bar NSStatusItem + Dock icon)
-    /// keeps running, same as any ordinary Mac app. No `windowShouldClose`
-    /// override needed for that part, AppKit's default already does it;
-    /// this method only exists to say so explicitly rather than rely on the
-    /// undocumented default, since `.regular` apps auto-terminate on last-
-    /// window-close unless told otherwise. Reopening is `StatusItemController
-    /// .openMainWindow()` (menu-bar item) or clicking the Dock icon — the
-    /// latter is handled for free by SwiftUI's `WindowGroup`, which
-    /// recreates a window on reactivation if none are open.
+    /// Makes the main window's red ✕ hide it instead of closing/tearing it
+    /// down (see the doc comment on `NSApp.windows.first?.delegate = self`
+    /// above for the bug this fixes) — standard macOS convention for an app
+    /// that stays running via a Dock icon/menu-bar item after its window
+    /// closes: the window comes back exactly as it was, not as a fresh
+    /// blank instance. Returning `false` here means AppKit's own `close()`
+    /// never actually runs; `orderOut(nil)` does the hiding ourselves.
+    /// Unreachable while a sheet (`CallReportView`/`CallConfirmView`/
+    /// `MissedCallReportView`/`SetupWizardView`) is attached — AppKit
+    /// disables a window's close button for the whole time it has an
+    /// attached sheet, so there's no risk of hiding the window out from
+    /// under an in-progress dialog.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+
+    /// Belt-and-suspenders alongside `windowShouldClose(_:)` above: even
+    /// though that override means AppKit's own "last window closed" path
+    /// should never actually fire for the one window it's attached to
+    /// (`orderOut` isn't a close), a `.regular` app defaults to quitting on
+    /// last-window-close otherwise — explicit `false` so nothing quits the
+    /// app out from under a hidden-not-closed window if some other code path
+    /// ever closes a window this delegate isn't attached to.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -309,8 +345,8 @@ struct ReplixerMacApp: App {
         }
         // File ▸ New Window (⌘N) is SwiftUI's default for any `WindowGroup`
         // scene, but this app is single-window by design (closing it just
-        // hides it — see AppDelegate.applicationShouldTerminateAfterLastWindowClosed
-        // — and reopening reuses that same window via the Dock icon or
+        // hides it — see AppDelegate.windowShouldClose(_:) — and reopening
+        // reuses that same window via the Dock icon or
         // StatusItemController.openMainWindow(), never a second one).
         // Invoking it would spawn a confusing duplicate full copy of the
         // whole app UI (its own sidebar, its own HomeView, etc.) sharing the
