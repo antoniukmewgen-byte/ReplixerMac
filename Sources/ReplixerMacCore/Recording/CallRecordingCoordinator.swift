@@ -191,8 +191,12 @@ public actor CallRecordingCoordinator {
 
         let outputURL = FileNaming.recordingURL(platform: platform)
         guard AudioMixerEncoder.start(processObjectID: processObjectID, outputURL: outputURL) else {
-            print("[CallRecordingCoordinator] ❌ не вдалося почати запис.")
-            Task { await ErrorReporter.shared.report(category: "RECORDING_START", message: "Не вдалося почати запис (\(platform)) — AudioMixerEncoder.start повернув false.") }
+            // Surface the underlying StepError (tap creation, aggregate
+            // device creation, device start, etc.) instead of just "returned
+            // false" — see AudioMixerEncoder.lastStartError's doc comment.
+            let underlyingError = AudioMixerEncoder.lastStartError
+            print("[CallRecordingCoordinator] ❌ не вдалося почати запис: \(underlyingError.map { String(describing: $0) } ?? "невідома причина").")
+            Task { await ErrorReporter.shared.report(category: "RECORDING_START", message: "Не вдалося почати запис (\(platform)) — AudioMixerEncoder.start повернув false.", error: underlyingError) }
             return false
         }
 

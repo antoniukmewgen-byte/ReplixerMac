@@ -36,6 +36,17 @@ public enum AudioMixerEncoder {
     private static var finalOutputURL: URL?
     private static var partialOutputURL: URL?
 
+    /// Set by `start()` whenever `performStart` throws, so a caller who only
+    /// sees the `Bool` return value can still find out *which* `StepError`
+    /// case actually fired (was previously only visible in a `print()` that
+    /// never left the local console — see the 2026-08-24 "AudioMixerEncoder
+    /// .start повернув false" WhatsApp error report, which arrived with zero
+    /// diagnostic detail because `CallRecordingCoordinator` had nothing to
+    /// pass as `ErrorReporter.report`'s `error:` argument). Cleared on the
+    /// next successful `start()` so a stale error can't be misattributed to
+    /// a later, unrelated failure.
+    public private(set) static var lastStartError: Error?
+
     /// Starts capture+mix+encode. `processObjectID` targets one specific
     /// running process's audio (the auto-detected-call path, via
     /// `CallRecordingCoordinator.callStarted`); pass `nil` for a system-wide
@@ -66,9 +77,11 @@ public enum AudioMixerEncoder {
             isActive = true
             finalOutputURL = outputURL
             partialOutputURL = partialURL
+            lastStartError = nil
             return true
         } catch {
             print("[AudioMixerEncoder] ❌ \(error)")
+            lastStartError = error
             return false
         }
     }
