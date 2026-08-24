@@ -23,7 +23,24 @@ import ReplixerMacCore
 /// on Mac — no delegate means Sparkle just logs to its own internal log and
 /// gives up, with nothing surfacing to the developer.
 private final class UpdaterErrorReporter: NSObject, SPUUpdaterDelegate {
+    // Sparkle's own "no update found" outcome for a user-initiated check
+    // (e.g. "Перевірити оновлення…" from the menu) is delivered through
+    // this same `didAbortWithError` delegate method, disguised as an
+    // NSError — `SUSparkleErrorDomain` code 1001 (`SUNoUpdateError`),
+    // localized description "You're up to date!". That's Sparkle's normal
+    // UI-driver plumbing (it needs an "abort" signal to dismiss the
+    // checking-for-updates progress state either way), not a technical
+    // failure — reporting it here was spamming the Telegram error channel
+    // on every manual check that simply found nothing new. Matches this
+    // project's existing "❌ real failures only, not normal business/data
+    // outcomes" ErrorReporter convention (see e.g. KommoService's
+    // "phone not found" case).
+    private static let noUpdateFoundDomain = "SUSparkleErrorDomain"
+    private static let noUpdateFoundCode = 1001
+
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        let nsError = error as NSError
+        guard nsError.domain != Self.noUpdateFoundDomain || nsError.code != Self.noUpdateFoundCode else { return }
         Task { await ErrorReporter.shared.report(category: "AUTO_UPDATE", message: "Sparkle: перевірка/завантаження оновлення перервано помилкою.", error: error) }
     }
 }
