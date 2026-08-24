@@ -117,6 +117,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // This app only ever has one window (WindowGroup + Phase 8.3's
+        // "reuse the single window" design) — AppKit's automatic window
+        // tabbing feature (View ▸ Show Tab Bar / Show All Tabs, plus the
+        // now-permanently-irrelevant Window ▸ Show Next/Previous Tab, Move
+        // Tab to New Window, Merge All Windows items) is on by default for
+        // every `.regular`-policy app regardless of whether it ever opens a
+        // second window, and was showing up as dead clutter in both menus
+        // once the Dock icon made this a normal `.regular` app. Turning it
+        // off here removes those items outright instead of leaving them
+        // permanently disabled/no-op.
+        NSWindow.allowsAutomaticWindowTabbing = false
+
         statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
 
         // Windows parity: App.xaml.cs kicks off an update check on every
@@ -294,6 +306,20 @@ struct ReplixerMacApp: App {
         WindowGroup {
             ContentView()
                 .frame(minWidth: 700, minHeight: 450)
+        }
+        // File ▸ New Window (⌘N) is SwiftUI's default for any `WindowGroup`
+        // scene, but this app is single-window by design (closing it just
+        // hides it — see AppDelegate.applicationShouldTerminateAfterLastWindowClosed
+        // — and reopening reuses that same window via the Dock icon or
+        // StatusItemController.openMainWindow(), never a second one).
+        // Invoking it would spawn a confusing duplicate full copy of the
+        // whole app UI (its own sidebar, its own HomeView, etc.) sharing the
+        // same underlying stores — not a real feature, just menu clutter
+        // left over from the WindowGroup default. Replacing the `.newItem`
+        // placement with nothing removes the item entirely rather than
+        // leaving it present-but-pointless.
+        .commands {
+            CommandGroup(replacing: .newItem) { }
         }
     }
 }
