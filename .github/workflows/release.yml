@@ -107,7 +107,26 @@ jobs:
           mkdir -p "$DIST_DIR/staging"
           cp -R ".build/ReplixerMac.app" "$DIST_DIR/staging/ReplixerMac.app"
           ln -s /Applications "$DIST_DIR/staging/Applications"
-          hdiutil create -volname "ReplixerMac $VERSION" -srcfolder "$DIST_DIR/staging" -ov -format UDZO "$DIST_DIR/$DMG_NAME"
+          # `-nospotlight` stops Spotlight from indexing the freshly-created
+          # volume during finalization — the most common cause of hdiutil's
+          # intermittent "Resource busy" failure on macOS CI runners (some
+          # other process, e.g. mdworker, still has the mounted volume open
+          # when hdiutil tries to detach/finalize it). The retry loop below
+          # is extra insurance against the same "Resource busy" symptom from
+          # any other transient holder (e.g. an AV scanner) — 3 attempts,
+          # 5s apart, matching this repo's other retry budgets (see
+          # GoogleDriveUploadService/KommoService backoff comments).
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "ReplixerMac $VERSION" -srcfolder "$DIST_DIR/staging" -ov -format UDZO -nospotlight "$DIST_DIR/$DMG_NAME"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "hdiutil create failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "hdiutil create failed (attempt $attempt/3) — retrying in 5s..."
+            sleep 5
+          done
           rm -rf "$DIST_DIR/staging"
           echo "DMG_PATH=$DIST_DIR/$DMG_NAME" >> "$GITHUB_ENV"
 

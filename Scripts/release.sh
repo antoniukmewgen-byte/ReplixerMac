@@ -111,7 +111,22 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/staging"
 cp -R "$APP_DIR" "$DIST_DIR/staging/ReplixerMac.app"
 ln -s /Applications "$DIST_DIR/staging/Applications"
-hdiutil create -volname "ReplixerMac $VERSION" -srcfolder "$DIST_DIR/staging" -ov -format UDZO "$DMG_PATH"
+# `-nospotlight` + retry loop — see the matching comment in
+# .github/workflows/release.yml's "Package DMG" step for why: hdiutil
+# intermittently fails with "Resource busy" while some other process
+# (typically Spotlight's mdworker) still has the freshly-created volume
+# open. Keep this in sync with that workflow file.
+for attempt in 1 2 3; do
+  if hdiutil create -volname "ReplixerMac $VERSION" -srcfolder "$DIST_DIR/staging" -ov -format UDZO -nospotlight "$DMG_PATH"; then
+    break
+  fi
+  if [ "$attempt" = 3 ]; then
+    echo "hdiutil create failed after 3 attempts" >&2
+    exit 1
+  fi
+  echo "hdiutil create failed (attempt $attempt/3) — retrying in 5s..."
+  sleep 5
+done
 rm -rf "$DIST_DIR/staging"
 echo "    $DMG_PATH"
 
