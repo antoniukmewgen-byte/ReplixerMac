@@ -116,7 +116,10 @@ struct ContentView: View {
         // if needed" pattern StatusItemController.openMainWindow() uses.
         if let activeCallSheet, activeCallSheet.id != previousID {
             NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first {
+            // `mainContentWindow`, not `.windows.first` — see its doc
+            // comment for why "first" isn't safe once the app also owns a
+            // status-bar item and several borderless auxiliary panels.
+            if let window = NSApp.mainContentWindow {
                 // `makeKeyAndOrderFront` alone does NOT undo miniaturization
                 // (the Dock genie-effect state) — that's a separate window
                 // state AppKit tracks independently of front/back ordering,

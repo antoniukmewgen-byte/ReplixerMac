@@ -121,10 +121,13 @@ final class StatusItemController {
     @objc private func openMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         // No window-id bookkeeping needed — WindowGroup only ever creates
-        // one window for this app (no multi-window/document support), so
-        // "the first window" is unambiguous. If the user closed it, this
-        // brings it back the same way clicking the Dock icon would.
-        if let window = NSApp.windows.first {
+        // one window for this app (no multi-window/document support). If
+        // the user closed it, this brings it back the same way clicking the
+        // Dock icon would. `mainContentWindow` (not `.windows.first`) picks
+        // it out specifically — see that property's doc comment for why
+        // "first" isn't safe once the app also owns a status-bar item and
+        // several borderless auxiliary panels.
+        if let window = NSApp.mainContentWindow {
             // `makeKeyAndOrderFront` alone doesn't undo miniaturization
             // (Dock genie-effect state) — a separate AppKit window state
             // from front/back ordering. Same fix, same reasoning as
