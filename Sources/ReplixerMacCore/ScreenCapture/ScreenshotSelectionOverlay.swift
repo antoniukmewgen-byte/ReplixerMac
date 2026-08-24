@@ -77,7 +77,7 @@ private final class SelectionWindowController {
 
         let window = OverlayWindow(
             contentRect: unionFrame,
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -87,6 +87,11 @@ private final class SelectionWindowController {
         window.level = .screenSaver // above everything, including the menu bar
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // NSPanel defaults this to true, which would hide the overlay the
+        // instant ReplixerMac deactivates — exactly what can happen right
+        // as this shows (the messenger app was just made frontmost by
+        // `NSWorkspace.shared.open` a moment earlier in `captureAndUpload`).
+        window.hidesOnDeactivate = false
 
         let view = SelectionView(frame: NSRect(origin: .zero, size: unionFrame.size))
         view.onFinish = { [weak self] localRect in
@@ -104,7 +109,15 @@ private final class SelectionWindowController {
         }
         window.contentView = view
 
-        NSApp.activate(ignoringOtherApps: true)
+        // Deliberately NOT `NSApp.activate(ignoringOtherApps:)` — that would
+        // activate the whole app, which raises *every* ReplixerMac window
+        // (including the still-open MissedCallReportView sheet) above every
+        // other app's windows, including the messenger this capture is
+        // supposed to be screenshotting. `.nonactivatingPanel` lets this
+        // specific window become key and receive the drag gesture / Escape
+        // without touching app-wide activation or any other window's
+        // z-order, so the messenger stays exactly where it was, visible
+        // through the selection's "hole".
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
 
@@ -122,10 +135,13 @@ private final class SelectionWindowController {
     }
 }
 
-/// Borderless windows don't become key by default, which would silently
-/// swallow the Escape-to-cancel `keyDown` — override both so
-/// `SelectionView` actually receives keyboard events.
-private final class OverlayWindow: NSWindow {
+/// `NSPanel` rather than plain `NSWindow` so `.nonactivatingPanel` (used in
+/// `show()`) is even available — that style is documented as panel-only,
+/// AppKit silently drops it on a bare `NSWindow`. Borderless (panel or not)
+/// windows also don't become key by default, which would silently swallow
+/// the Escape-to-cancel `keyDown` — override both so `SelectionView`
+/// actually receives keyboard events despite never being app-activated.
+private final class OverlayWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
