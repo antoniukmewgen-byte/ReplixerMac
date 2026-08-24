@@ -15,9 +15,11 @@ import ReplixerMacCore
 ///   `CallReportData.positions`) — so duplicating it here would just be a
 ///   second, easier-to-desync copy of the same setting. Defaults to
 ///   "Менеджер" (`AppSettings.position`'s own default) until changed there.
-/// - **No Google Sheets card.** Sheets has no mac backend at all yet (no
-///   `GoogleSheetsUploadService`, no settings fields) — Phase 10 scope, not
-///   this feature. Windows' Sheets card has no mac equivalent to show.
+/// - **No Google Sheets card.** Same reasoning as the Position picker above,
+///   not a missing backend — `GoogleSheetsUploadService` + its settings
+///   fields have existed since Phase 15, wired into
+///   `MissedCallDeliveryService`; the config just lives in `ProfileView`'s
+///   Sheets section instead of duplicating it into onboarding.
 ///
 /// Google Drive / Kommo / Telegram test/authorize logic is NOT duplicated
 /// here — Drive and Kommo reuse the exact same `CheckOutcome`-shaped

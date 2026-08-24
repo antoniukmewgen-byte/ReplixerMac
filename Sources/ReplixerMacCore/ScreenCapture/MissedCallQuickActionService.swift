@@ -16,11 +16,11 @@ import Foundation
 ///   initial rectangle; `ScreenshotSelectionOverlay` always starts blank
 ///   (it has no "seed" API to begin with — see that type's doc comment) and
 ///   the manager drags freehand instead.
-/// - No dedicated screenshot-upload retry queue on failure — Windows
-///   enqueues into `PendingScreenshotUploadRetryService`; here a failed
-///   upload just surfaces as `.uploadFailed` and the manager re-clicks the
-///   same button to retry (same "no separate queue" scoping already applied
-///   to `MissedCallDeliveryService`, see its doc comment).
+/// - A failed upload also gets queued for background retry (see
+///   `ScreenshotUploadRetryService`, Windows parity: enqueuing into
+///   `PendingScreenshotUploadRetryService`) — `.uploadFailed` still surfaces
+///   immediately so the manager sees the error right away, but doesn't need
+///   to re-click the button for the link to eventually land.
 /// - Screenshots go through `GoogleDriveUploadService.resolveScreenshotsFolder()`,
 ///   Windows parity: `MissedCallReportViewModel.ResolveScreenshotFolderIdAsync`
 ///   / `GetOrCreateUserFolderAsync` — creates/finds a "Screenshots" subfolder
@@ -100,12 +100,17 @@ public enum MissedCallQuickActionService {
         }
 
         guard let folderId = await GoogleDriveUploadService.resolveScreenshotsFolder() else {
+            // Folder resolution itself failed — the capture is still a real
+            // file on disk, so queue it anyway (with a nil folder id;
+            // ScreenshotUploadRetryService re-resolves it on each retry).
+            ScreenshotUploadRetryService.shared.enqueue(localPath: filePath, folderId: nil, messenger: messenger, kommoLeadUrl: trimmedCrmUrl)
             return .uploadFailed("googleDriveFolderId не налаштовано")
         }
         do {
             let driveUrl = try await GoogleDriveUploadService.upload(filePath: filePath, folderId: folderId)
             return .succeeded(driveUrl: driveUrl)
         } catch {
+            ScreenshotUploadRetryService.shared.enqueue(localPath: filePath, folderId: folderId, messenger: messenger, kommoLeadUrl: trimmedCrmUrl)
             return .uploadFailed("\(error)")
         }
     }

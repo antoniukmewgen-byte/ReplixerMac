@@ -33,6 +33,13 @@ import Foundation
 /// edge case: Telegram sent on one attempt while Drive was still down,
 /// Drive succeeds on a *later* retry).
 enum UploadOrchestrator {
+    // Same self-contained-per-integration pattern as
+    // `TelegramUploadService.appVersion`/`ErrorReporter.currentAppVersion` —
+    // duplicated rather than shared, see those types' doc comments.
+    private static var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0-poc"
+    }
+
     struct Result {
         var driveUrl: String?
         var driveFailed: Bool
@@ -293,10 +300,18 @@ enum UploadOrchestrator {
         // isGoogleDriveEnabled gate above for the same reasoning.
         guard AppSettings.shared.isKommoEnabled else { return existingNoteId }
         guard let crmUrl else { return existingNoteId }
-        let text: String = {
-            guard let driveUrl, !driveUrl.isEmpty else { return caption }
-            return caption + "\n💾 Google Drive: \(driveUrl)"
+        // Windows parity: `PostKommoAsync`'s `CaptionHelper.StripHashtags` —
+        // a trailing `#hashtag` line (see `CaptionHelper`'s doc comment) is
+        // Telegram-only tagging, not something the CRM note body should show.
+        let kommoBase = CaptionHelper.stripHashtags(caption)
+        var text: String = {
+            guard let driveUrl, !driveUrl.isEmpty else { return kommoBase }
+            return kommoBase + "\n💾 Google Drive: \(driveUrl)"
         }()
+        // Windows parity: `PostKommoAsync` always appends this, unlike the
+        // edit path (`EditEntryReportAsync`/`CallRecordingCoordinator
+        // .editKommoNote`, which never adds a version line at all).
+        text += "\n🔖 v\(appVersion)"
 
         async let noteTask: Int64? = postKommoNote(crmUrl: crmUrl, text: text)
         // Recording uploads don't track processing-speed values anywhere

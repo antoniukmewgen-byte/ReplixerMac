@@ -602,9 +602,12 @@ public actor CallRecordingCoordinator {
     /// .attemptKommo` treating a missing crmUrl as "skip, not fail".
     private func editKommoNote(crmUrl: String?, noteId: Int64?, caption: String, driveUrl: String?, callType: String?) async -> String? {
         guard let crmUrl, let noteId else { return nil }
+        // Windows parity: `EditEntryReportAsync`'s `CaptionHelper.StripHashtags`
+        // — same reasoning as `UploadOrchestrator.attemptKommo`.
+        let kommoBase = CaptionHelper.stripHashtags(caption)
         let text: String = {
-            guard let driveUrl, !driveUrl.isEmpty else { return caption }
-            return caption + "\n💾 Google Drive: \(driveUrl)"
+            guard let driveUrl, !driveUrl.isEmpty else { return kommoBase }
+            return kommoBase + "\n💾 Google Drive: \(driveUrl)"
         }()
         return await KommoService.editNote(leadUrl: crmUrl, noteId: noteId, noteText: text, callType: callType)
     }

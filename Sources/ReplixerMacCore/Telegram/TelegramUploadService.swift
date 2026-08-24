@@ -162,16 +162,21 @@ enum TelegramUploadService {
 
     /// Windows parity: `BuildCaption` appends `"\n💾 Google Drive: {url}"`
     /// before the version tag when a Drive URL is present, then always
-    /// appends `"\n🔖 v{version}"` last. `CaptionHelper.SplitHashtagSuffix`
-    /// (which keeps a trailing `#hashtag` line last, after the version tag)
-    /// isn't ported — nothing in this app generates hashtag captions yet,
-    /// so there's nothing for it to reorder; revisit if that changes.
+    /// appends `"\n🔖 v{version}"` last. A trailing `#hashtag` line (see
+    /// `CaptionHelper`'s doc comment) is split off first so the Drive line
+    /// lands before it, then re-appended right before the version tag —
+    /// same reordering as Windows' `CaptionHelper.SplitHashtagSuffix` use.
     private static func buildCaption(_ caption: String, driveUrl: String?) -> String {
-        var text = caption
-        if let driveUrl, !driveUrl.isEmpty {
-            text += "\n💾 Google Drive: \(driveUrl)"
+        let version = "\n🔖 v\(appVersion)"
+        guard let driveUrl, !driveUrl.isEmpty else {
+            return caption + version
         }
-        text += "\n🔖 v\(appVersion)"
+        let (body, hashtagLine) = CaptionHelper.splitHashtagSuffix(caption)
+        var text = body + "\n💾 Google Drive: \(driveUrl)"
+        if let hashtagLine {
+            text += "\n\(hashtagLine)"
+        }
+        text += version
         return text
     }
 

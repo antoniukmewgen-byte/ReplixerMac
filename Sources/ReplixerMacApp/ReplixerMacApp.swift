@@ -218,6 +218,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // "start once at launch, stop on quit" lifecycle as
         // pendingUploadRetryService above.
         MissedCallDeliveryService.shared.start()
+        // Screenshot-upload retry queue — same "start once at launch, stop
+        // on quit" lifecycle as the two services above.
+        ScreenshotUploadRetryService.shared.start()
 
         // Windows parity: `App.xaml.cs`'s `ShowMissedCallReminder()` call,
         // gated the same way Windows gates its whole `ShowMainWindow()` —
@@ -256,6 +259,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         pendingUploadRetryService.stop()
         MissedCallDeliveryService.shared.stop()
+        ScreenshotUploadRetryService.shared.stop()
         Task { [coordinator] in
             await coordinator.shutdown()
             await ErrorReporter.shared.stop()
@@ -263,6 +267,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             RecordingHistory.shared.flush()
             MissedCallHistory.shared.flush()
             MissedCallDeliveryService.shared.flush()
+            ScreenshotUploadRetryService.shared.flush()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

@@ -110,6 +110,13 @@ public enum ScreenCaptureService {
             configuration.showsCursor = false
 
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+
+            // Feedback right after the frame is actually captured (not after
+            // the slower PNG encode/save below) — same reasoning as Windows'
+            // `ScreenCaptureService.CaptureRegion` calling
+            // `ScreenshotFeedbackService.Flash()` before its own encode step.
+            await ScreenshotFeedbackService.flash()
+
             return save(image, messenger: messenger)
         } catch {
             print("[ScreenCaptureService] ❌ захват екрана не вдався: \(error)")
