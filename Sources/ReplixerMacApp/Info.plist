@@ -51,13 +51,15 @@
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
-    <!-- Phase 8.3: menu-bar-only, no Dock icon/Cmd+Tab entry — Windows-tray
-         parity (StatusItemController is the way back in). AppDelegate's
-         explicit `NSApp.setActivationPolicy(.accessory)` mirrors this; if
-         that line ever drifts back to `.regular` it silently overrides
-         this key at runtime, so keep the two in sync. -->
+    <!-- Phase 8.3 gave this app menu-bar-only/no-Dock-icon behavior for
+         Windows-tray parity; a later ask restored the Dock icon (and
+         Cmd+Tab entry) while *keeping* the menu-bar item too, so the app
+         now has both. AppDelegate's explicit
+         `NSApp.setActivationPolicy(.regular)` mirrors this; if that line
+         ever drifts back to `.accessory` it silently overrides this key at
+         runtime, so keep the two in sync. -->
     <key>LSUIElement</key>
-    <true/>
+    <false/>
     <!-- Required for AVAudioEngine.inputNode/AVAudioApplication's TCC
          prompt (Phase 1.2) to show at all instead of silently failing —
          previously relied on whatever default Xcode's throwaway

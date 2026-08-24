@@ -101,18 +101,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // CallRecordingCoordinator.appInstance's doc comment.
         CallRecordingCoordinator.appInstance = coordinator
 
-        // Phase 8.3: `.accessory`, not `.regular` — matches Info.plist's
-        // LSUIElement=true (menu-bar-only, no Dock icon/Cmd+Tab entry, see
-        // StatusItemController). Explicit here rather than left to
-        // Info.plist alone: this line used to hardcode `.regular` (pre-
-        // Phase-8.3, before there was an Info.plist to read LSUIElement
-        // from at all) specifically because SwiftPM executables launched
-        // via Xcode's debugger don't get the automatic frontmost-activation
-        // Finder-launched apps get for free — that reasoning still applies,
-        // it just needs the accessory-compatible target now. Accessory apps
-        // can still `.activate`/own a key window; they just don't reserve a
-        // Dock slot.
-        NSApp.setActivationPolicy(.accessory)
+        // `.regular` — matches Info.plist's LSUIElement=false: a Dock icon
+        // (and Cmd+Tab entry) alongside the existing menu-bar item, not
+        // instead of it (StatusItemController's NSStatusItem is untouched
+        // by this). Phase 8.3 originally made this `.accessory` for
+        // Windows-tray parity (no Dock icon at all); a later ask restored
+        // the Dock icon while keeping the menu-bar affordance too, so the
+        // app now has both simultaneously — a deliberate mac-only
+        // enhancement over Windows, which only ever has the one tray icon.
+        // Explicit here rather than left to Info.plist alone: SwiftPM
+        // executables launched via Xcode's debugger don't get the automatic
+        // frontmost-activation Finder-launched apps get for free, so the
+        // explicit `.activate` call right below still matters regardless of
+        // policy.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
         statusItemController = StatusItemController(updaterController: updaterController, worldClockController: worldClockController)
@@ -129,19 +131,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // `checkForUpdates(_:)`, which always surfaces a "checking..." UI.
         updaterController.updater.checkForUpdatesInBackground()
 
-        // Phase 13.3 — Windows parity: this app has no Dock icon
-        // (LSUIElement=true / `.accessory` above), so unlike a normal
-        // `.regular` app the default AppKit behavior for an accessory app's
-        // last window closing is to just close/hide it — the process (and
-        // its menu-bar NSStatusItem) keeps running, only reachable again via
-        // StatusItemController's "Відкрити ReplixerMac" item. That's not
-        // what a red traffic-light ✕ means to a user: on Windows the main
-        // window's close button *is* a full quit (no separate "minimize to
-        // tray" affordance), and tray-only apps that silently keep running
-        // after their visible window closes are a common source of "why is
-        // this still using my mic" confusion — worth avoiding here even
-        // though tray/menu-bar-only operation is otherwise intentional
-        // (Phase 8.3). So: become the delegate of the one-and-only
+        // Phase 13.3 — Windows parity: on Windows the main window's close
+        // button *is* a full quit (no separate "minimize to tray"
+        // affordance), and this app's default AppKit behavior for a
+        // `.regular` app's last window closing (just close/hide it — the
+        // process, menu-bar NSStatusItem, and now Dock icon all keep
+        // running, only reachable again via StatusItemController's
+        // "Відкрити ReplixerMac" item or the Dock icon) isn't what a red
+        // traffic-light ✕ means to a user. Deliberately kept even after the
+        // Dock icon was added (see `.setActivationPolicy(.regular)` above):
+        // apps silently continuing to run after their visible window
+        // closes are a common source of "why is this still using my mic"
+        // confusion regardless of whether a Dock icon is present to hint at
+        // it. So: become the delegate of the one-and-only
         // WindowGroup-created window (same `NSApp.windows.first` "there's
         // only ever one" assumption `StatusItemController.openMainWindow()`
         // already relies on) and route its close button through the exact

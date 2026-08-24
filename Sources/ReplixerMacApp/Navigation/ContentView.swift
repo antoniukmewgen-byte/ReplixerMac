@@ -99,8 +99,8 @@ struct ContentView: View {
             activeCallSheet = nil
         }
 
-        // Bring the app (menu-bar-only, .accessory — no Dock icon to click)
-        // to the front whenever a *new* sheet request appears — covers both
+        // Bring the app (menu-bar item + Dock icon, `.regular`) to the front
+        // whenever a *new* sheet request appears — covers both
         // halves of the ask: call detection firing the confirm dialog
         // (`monitor.onCallStarted`/`onCallEnded` -> CallConfirmRequestStore)
         // and the report form opening (CallReportView/MissedCallReportView),
