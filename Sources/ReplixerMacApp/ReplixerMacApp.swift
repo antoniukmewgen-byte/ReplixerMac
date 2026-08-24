@@ -310,6 +310,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         false
     }
 
+    /// Dock-icon reopen. Before `windowShouldClose(_:)` existed, closing the
+    /// window actually destroyed it, so SwiftUI's own `WindowGroup` reopen
+    /// handling kicked in automatically (no window at all → it just made a
+    /// fresh one). Now the window is only `orderOut`'d, never destroyed —
+    /// and `orderOut` is not the same as AppKit's "Hide App" (⌘H), which is
+    /// the specific case AppKit's *default*, un-overridden reopen behavior
+    /// knows how to undo on its own. An `orderOut`'d-but-still-alive window
+    /// doesn't get that automatic treatment, which is exactly why clicking
+    /// the Dock icon stopped doing anything after that fix. Overriding this
+    /// ourselves — same `mainContentWindow` + deminiaturize-then-front logic
+    /// as `StatusItemController.openMainWindow()` — closes that gap
+    /// explicitly instead of relying on a default that no longer applies.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        if !flag, let window = NSApp.mainContentWindow {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+
     /// AppKit's async-shutdown hook: returning `.terminateLater` and calling
     /// `NSApp.reply(toApplicationShouldTerminate:)` once cleanup finishes
     /// lets Cmd+Q/Dock-quit wait for an in-flight recording to be finalized
