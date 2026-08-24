@@ -177,7 +177,7 @@ public final class RecordingHistory {
     /// already-succeeded step it was told to skip comes back unchanged, not
     /// nil), so there's never a need to distinguish "don't touch" from
     /// "set to nil/false" here.
-    func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool, kommoNoteId: Int64?) {
+    func updateUploadState(id: UUID, driveUrl: String?, driveFailed: Bool, telegramMessageId: Int64?, telegramFailed: Bool, kommoNoteId: Int64?, kommoFailed: Bool) {
         mutate { entries in
             guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
             entries[index].driveUrl = driveUrl
@@ -185,6 +185,7 @@ public final class RecordingHistory {
             entries[index].telegramMessageId = telegramMessageId
             entries[index].telegramFailed = telegramFailed
             entries[index].kommoNoteId = kommoNoteId
+            entries[index].kommoFailed = kommoFailed
             return true
         }
     }

@@ -46,10 +46,10 @@ enum UploadOrchestrator {
         var telegramMessageId: Int64?
         var telegramFailed: Bool
         // Phase 11.4: mirrors telegramMessageId's "handle for a later edit"
-        // role, not an attempt-outcome flag — no kommoNoteFailed counterpart
-        // exists because Kommo note creation was never tracked for
-        // background retry to begin with (see attemptKommo's doc comment).
+        // role — the note id itself, whether just-created or carried over
+        // unchanged from a prior attempt.
         var kommoNoteId: Int64?
+        var kommoFailed: Bool
     }
 
     /// - Parameters:
@@ -71,14 +71,15 @@ enum UploadOrchestrator {
     /// - Parameter crmUrl: the lead URL from the call report, if one was
     ///   shown and submitted — feeds the Kommo note + call-metadata legs
     ///   only. `nil` means "no report data available" (no report form was
-    ///   shown, or this is a `PendingUploadRetryService` retry —
-    ///   `RecordingEntry` doesn't persist `crmUrl`, so Kommo can only ever
-    ///   be attempted on the *first* pass, never retried; same known gap as
-    ///   before this rework, just relocated — see `attemptKommo` below).
+    ///   shown at all — a background retry now passes `entry.reportData?
+    ///   .crmUrl`, so this is only nil there when no report was ever
+    ///   submitted for the entry, matching every other "not configured,
+    ///   skip" case).
     /// - Parameter callStartedAt/callType: Phase 10.1b — feed
     ///   `KommoService.applyCallMetadata`'s first-contact-date/processing-
-    ///   speed and call-type/Nedozvon legs. Same nil-on-retry gap as
-    ///   `crmUrl` (`RecordingEntry` persists neither).
+    ///   speed and call-type/Nedozvon legs. Same source as `crmUrl` above on
+    ///   a background retry (`entry.startedAt`/`entry.reportData?
+    ///   .resolvedCallType`).
     /// - Parameter skipTelegram: Windows parity — `PositionPolicy
     ///   .shouldSkipTelegram(position, duration)`, precomputed by the
     ///   caller (it needs the call's role/duration, neither of which this
@@ -131,19 +132,20 @@ enum UploadOrchestrator {
             client: telegramClient,
             skipTelegram: skipTelegram
         )
-        async let kommoNoteId: Int64? = attemptKommo(
+        async let kommoOutcome: (Int64?, Bool) = attemptKommo(
             crmUrl: crmUrl, caption: caption, driveUrl: resolvedDriveUrl, callStartedAt: callStartedAt, callType: callType,
             existingNoteId: existingKommoNoteId)
 
         let (telegramMessageId, telegramFailed) = await telegramOutcome
-        let resolvedKommoNoteId = await kommoNoteId
+        let (resolvedKommoNoteId, kommoFailed) = await kommoOutcome
 
         return Result(
             driveUrl: driveUrl,
             driveFailed: driveFailed,
             telegramMessageId: telegramMessageId,
             telegramFailed: telegramFailed,
-            kommoNoteId: resolvedKommoNoteId
+            kommoNoteId: resolvedKommoNoteId,
+            kommoFailed: kommoFailed
         )
     }
 
@@ -282,36 +284,42 @@ enum UploadOrchestrator {
     /// `Task.WhenAll`, so this fires them via `async let` rather than
     /// awaiting the note before starting metadata.
     ///
-    /// Returns `existingNoteId` unchanged (not a failure, no retry) when
-    /// Kommo isn't configured or there's no `crmUrl` — same opt-in-automation
-    /// shape as `attemptGoogleDrive`/`attemptTelegram`. Still no retry
-    /// tracking: `RecordingEntry` has no `crmUrl`/`callStartedAt`/`callType`
-    /// fields, so `PendingUploadRetryService` always passes them as `nil`
-    /// and this simply never posts a *new* note on a retry — a failed note/
-    /// metadata write is logged and dropped, not retried, same known gap as
-    /// before this rework. `existingNoteId` (Phase 11.4) is what makes that
-    /// safe: a retry's `nil` crmUrl returns the id an earlier attempt
-    /// already captured instead of silently erasing it.
+    /// Returns `(existingNoteId, false)` unchanged (not a failure, no retry
+    /// needed) when Kommo isn't configured or there's no `crmUrl` — same
+    /// opt-in-automation shape as `attemptGoogleDrive`/`attemptTelegram`.
+    /// When a note *should* have been posted (`crmUrl` present) but
+    /// `KommoService.addNote`'s own inline retries all fail, the failure is
+    /// surfaced as `kommoFailed = true` so `RecordingHistory
+    /// .needsBackgroundRetry` picks the entry up for a background retry —
+    /// same tracking shape Drive/Telegram already had. `existingNoteId`
+    /// (Phase 11.4) still protects a retry from clobbering an id an earlier
+    /// attempt already captured.
     private static func attemptKommo(
         crmUrl: String?, caption: String, driveUrl: String?, callStartedAt: Date?, callType: String?, existingNoteId: Int64?
-    ) async -> Int64? {
-        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return existingNoteId }
+    ) async -> (Int64?, Bool) {
+        guard AppSettings.shared.kommoSubdomain != nil, AppSettings.shared.kommoApiToken != nil else { return (existingNoteId, false) }
         // Phase 12: Windows parity `IsKommoEnabled` — see attemptGoogleDrive's
         // isGoogleDriveEnabled gate above for the same reasoning.
-        guard AppSettings.shared.isKommoEnabled else { return existingNoteId }
-        guard let crmUrl else { return existingNoteId }
+        guard AppSettings.shared.isKommoEnabled else { return (existingNoteId, false) }
+        guard let crmUrl else { return (existingNoteId, false) }
+        // A note already exists for this entry (retry after Telegram/Drive
+        // failed on the same first attempt) — don't post a second one.
+        guard existingNoteId == nil else { return (existingNoteId, false) }
         // Windows parity: `PostKommoAsync`'s `CaptionHelper.StripHashtags` —
         // a trailing `#hashtag` line (see `CaptionHelper`'s doc comment) is
         // Telegram-only tagging, not something the CRM note body should show.
         let kommoBase = CaptionHelper.stripHashtags(caption)
-        var text: String = {
-            guard let driveUrl, !driveUrl.isEmpty else { return kommoBase }
-            return kommoBase + "\n💾 Google Drive: \(driveUrl)"
+        let driveLine: String = {
+            guard let driveUrl, !driveUrl.isEmpty else { return "" }
+            return "\n💾 Google Drive: \(driveUrl)"
         }()
         // Windows parity: `PostKommoAsync` always appends this, unlike the
         // edit path (`EditEntryReportAsync`/`CallRecordingCoordinator
         // .editKommoNote`, which never adds a version line at all).
-        text += "\n🔖 v\(appVersion)"
+        // `let`, not `var` — a mutated `var` can't be captured by the
+        // `async let` below (Swift's concurrency checker rejects reading a
+        // captured `var` from concurrently-executing code).
+        let text = kommoBase + driveLine + "\n🔖 v\(appVersion)"
 
         async let noteTask: Int64? = postKommoNote(crmUrl: crmUrl, text: text)
         // Recording uploads don't track processing-speed values anywhere
@@ -322,9 +330,14 @@ enum UploadOrchestrator {
         async let metadataTask = KommoService.applyCallMetadata(crmUrl: crmUrl, callStartTime: callStartedAt, callType: callType)
         let noteId = await noteTask
         _ = await metadataTask
-        return noteId ?? existingNoteId
+        return (noteId ?? existingNoteId, noteId == nil)
     }
 
+    /// `KommoService.addNote` already retries internally (3 attempts,
+    /// exponential backoff — Windows parity `PostNoteAsync`); a `nil` here
+    /// means every one of those attempts failed, which is what promotes to
+    /// `kommoFailed = true` in the caller so the background retry service
+    /// tries again later.
     private static func postKommoNote(crmUrl: String, text: String) async -> Int64? {
         do {
             let noteId = try await KommoService.addNote(crmUrl: crmUrl, text: text)

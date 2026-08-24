@@ -75,6 +75,13 @@ public struct RecordingEntry: Codable, Identifiable {
     // stays internal until something actually reads it.
     var driveFailed: Bool
     var telegramFailed: Bool
+    // Mirrors driveFailed/telegramFailed for the Kommo note leg — Windows
+    // parity: `RecordingEntry.cs`'s `KommoFailed`. Only set true when a note
+    // *should* have been posted (crmUrl was available) and the attempt
+    // (after KommoService.addNote's own inline retries) still failed; "not
+    // configured"/"no crmUrl this run" stays false, same opt-in-automation
+    // shape as driveFailed/telegramFailed.
+    var kommoFailed: Bool
 
     // Phase 10.0: the exact Drive/Telegram caption used for this recording
     // (either the submitted call-report's `formatCaption()`, or the
@@ -112,6 +119,7 @@ public struct RecordingEntry: Codable, Identifiable {
         self.kommoNoteId = nil
         self.driveFailed = false
         self.telegramFailed = false
+        self.kommoFailed = false
         self.caption = nil
         self.reportData = nil
     }
@@ -119,7 +127,7 @@ public struct RecordingEntry: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, platform, startedAt, filePath, status, callDuration
         case driveUrl, telegramMessageId, driveFailed, telegramFailed
-        case caption, reportData, kommoNoteId
+        case caption, reportData, kommoNoteId, kommoFailed
         // isBackgroundRetrying intentionally omitted from CodingKeys — see
         // its doc comment above.
     }
@@ -142,6 +150,7 @@ public struct RecordingEntry: Codable, Identifiable {
         kommoNoteId = try container.decodeIfPresent(Int64.self, forKey: .kommoNoteId)
         driveFailed = try container.decodeIfPresent(Bool.self, forKey: .driveFailed) ?? false
         telegramFailed = try container.decodeIfPresent(Bool.self, forKey: .telegramFailed) ?? false
+        kommoFailed = try container.decodeIfPresent(Bool.self, forKey: .kommoFailed) ?? false
         caption = try container.decodeIfPresent(String.self, forKey: .caption)
         reportData = try container.decodeIfPresent(CallReportData.self, forKey: .reportData)
     }
@@ -159,18 +168,19 @@ public struct RecordingEntry: Codable, Identifiable {
         try container.encodeIfPresent(kommoNoteId, forKey: .kommoNoteId)
         try container.encode(driveFailed, forKey: .driveFailed)
         try container.encode(telegramFailed, forKey: .telegramFailed)
+        try container.encode(kommoFailed, forKey: .kommoFailed)
         try container.encodeIfPresent(caption, forKey: .caption)
         try container.encodeIfPresent(reportData, forKey: .reportData)
     }
 
-    // Windows parity: RecordingEntry.cs's NeedsBackgroundRetry, scoped down
-    // — no ReportData/Kommo concept on macOS yet (no Phase 7 UI, no Phase 10
-    // Kommo), so this is just "a step failed, and the local file is still
-    // there to retry with" (a step that was simply never configured stays
-    // driveFailed/telegramFailed == false forever, so it's never picked up
-    // here).
+    // Windows parity: RecordingEntry.cs's NeedsBackgroundRetry — "a step
+    // failed, and the local file is still there to retry with" (a step that
+    // was simply never configured stays *Failed == false forever, so it's
+    // never picked up here). Now also covers kommoFailed: a background retry
+    // can re-post the note using reportData.crmUrl/resolvedCallType and
+    // startedAt, all of which are already persisted on the entry.
     var needsBackgroundRetry: Bool {
-        guard driveFailed || telegramFailed else { return false }
+        guard driveFailed || telegramFailed || kommoFailed else { return false }
         guard let filePath else { return false }
         return FileManager.default.fileExists(atPath: filePath)
     }

@@ -18,13 +18,13 @@ import Foundation
 /// exact hierarchy this produces under `AppSettings.shared
 /// .googleDriveFolderId` (the user-configured *parent*).
 ///
-/// Deliberately NOT ported yet (deferred, not silently dropped): the
-/// Windows original's process-lifetime shared rate-limit cooldown across
-/// every upload call site. That only starts mattering once a background
-/// retry service exists hitting this repeatedly on a timer — this
-/// single-shot "one retry after a short delay" shape (same as
-/// `TelegramUploadService`) is enough for the live-call upload path this
-/// phase builds.
+/// Windows parity: `GoogleDriveUploadService.cs`'s process-lifetime shared
+/// rate-limit cooldown across every upload call site — a 403/429 with a
+/// `userRateLimitExceeded`/`rateLimitExceeded`/`quotaExceeded` reason pauses
+/// every subsequent upload attempt (this call's own retries, and any other
+/// concurrent caller — `ScreenshotUploadRetryService`/
+/// `MissedCallQuickActionService` share the same actor) for ~100s rather
+/// than immediately hammering the same quota window again.
 enum GoogleDriveUploadService {
     enum UploadError: Swift.Error {
         case couldNotReadFileSize
@@ -33,6 +33,50 @@ enum GoogleDriveUploadService {
         case uploadFailed(String)
         case folderLookupFailed(String)
         case folderCreateFailed(String)
+    }
+
+    /// Process-lifetime gate: an actor (not a plain static `var` + lock) so
+    /// concurrent uploads from different call sites can `await` on it
+    /// without any of them needing their own synchronization.
+    private actor RateLimitGate {
+        static let shared = RateLimitGate()
+        private var cooldownUntil: Date?
+
+        func waitIfNeeded() async {
+            guard let cooldownUntil, cooldownUntil > Date() else { return }
+            let remaining = cooldownUntil.timeIntervalSinceNow
+            print("[GoogleDriveUploadService] ⏳ діє обмеження швидкості Google Drive — очікую ще \(Int(remaining))с...")
+            try? await Task.sleep(nanoseconds: UInt64(max(remaining, 0) * 1_000_000_000))
+        }
+
+        func markRateLimited(cooldown: TimeInterval) {
+            cooldownUntil = Date().addingTimeInterval(cooldown)
+        }
+    }
+
+    // Windows parity: `GoogleDriveUploadService.cs`'s rate-limit cooldown
+    // constant.
+    private static let rateLimitCooldown: TimeInterval = 100
+
+    /// String-matches on the message embedded in `UploadError
+    /// .initiateSessionFailed`/`.uploadFailed` (`"статус {code}: {body}"`) —
+    /// there's no structured HTTP-status field on these cases (see the enum
+    /// above), so this is the only way to tell "Drive rejected this because
+    /// of quota" apart from any other 4xx/5xx failure without a larger
+    /// refactor of the error type.
+    private static func isRateLimitError(_ error: Error) -> Bool {
+        let message: String
+        switch error {
+        case UploadError.initiateSessionFailed(let msg), UploadError.uploadFailed(let msg):
+            message = msg
+        default:
+            return false
+        }
+        if message.hasPrefix("статус 429") { return true }
+        guard message.hasPrefix("статус 403") else { return false }
+        return message.contains("rateLimitExceeded")
+            || message.contains("userRateLimitExceeded")
+            || message.contains("quotaExceeded")
     }
 
     // MARK: - Folder resolution (Windows parity: ResolveTargetFolderAsync)
@@ -196,19 +240,32 @@ enum GoogleDriveUploadService {
     /// line `TelegramUploadService.buildCaption` already knows how to
     /// append.
     ///
-    /// Retries exactly once, after a fixed 5s delay, on any thrown error —
-    /// same "one retry, then surface the failure" shape as
-    /// `TelegramUploadService.sendRecording`.
-    static func upload(filePath: String, folderId: String, isRetry: Bool = false) async throws -> String {
+    /// Windows parity: `GoogleDriveUploadService.cs`'s `UploadAsync` — 3
+    /// attempts total, 5s/10s backoff between them. A rate-limit-classified
+    /// failure (see `isRateLimitError`) instead engages the shared ~100s
+    /// cooldown gate above rather than the short fixed backoff, and every
+    /// attempt (including the first, on any call site) waits out an
+    /// already-active cooldown before even trying — same "stop hammering
+    /// the same quota window" reasoning as Windows' shared cooldown field.
+    static func upload(filePath: String, folderId: String, attempt: Int = 1) async throws -> String {
+        await RateLimitGate.shared.waitIfNeeded()
         do {
             let accessToken = try await GoogleServiceAccountAuth.fetchAccessToken()
             let sessionURL = try await initiateResumableSession(filePath: filePath, folderId: folderId, accessToken: accessToken)
             return try await uploadFileBytes(filePath: filePath, sessionURL: sessionURL)
         } catch {
-            guard !isRetry else { throw error }
-            print("[GoogleDriveUploadService] ⚠️ завантаження не вдалось (\(error)), повторна спроба через 5с...")
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            return try await upload(filePath: filePath, folderId: folderId, isRetry: true)
+            let maxAttempts = 3
+            guard attempt < maxAttempts else { throw error }
+            if isRateLimitError(error) {
+                print("[GoogleDriveUploadService] ⚠️ Google Drive повернув помилку ліміту швидкості (\(error)) — пауза \(Int(rateLimitCooldown))с перед повторною спробою...")
+                await RateLimitGate.shared.markRateLimited(cooldown: rateLimitCooldown)
+                await RateLimitGate.shared.waitIfNeeded()
+            } else {
+                let delaySeconds = attempt * 5
+                print("[GoogleDriveUploadService] ⚠️ завантаження не вдалось (\(error)), повторна спроба через \(delaySeconds)с...")
+                try? await Task.sleep(nanoseconds: UInt64(delaySeconds) * 1_000_000_000)
+            }
+            return try await upload(filePath: filePath, folderId: folderId, attempt: attempt + 1)
         }
     }
 

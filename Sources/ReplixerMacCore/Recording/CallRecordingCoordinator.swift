@@ -499,9 +499,10 @@ public actor CallRecordingCoordinator {
             driveFailed: result.driveFailed,
             telegramMessageId: result.telegramMessageId,
             telegramFailed: result.telegramFailed,
-            kommoNoteId: result.kommoNoteId
+            kommoNoteId: result.kommoNoteId,
+            kommoFailed: result.kommoFailed
         )
-        RecordingHistory.shared.markDraftResolved(id: entryID, succeeded: !result.driveFailed && !result.telegramFailed)
+        RecordingHistory.shared.markDraftResolved(id: entryID, succeeded: !result.driveFailed && !result.telegramFailed && !result.kommoFailed)
     }
 
     /// Phase 11.4 — Windows parity: `HomeViewModel.EditEntryReportAsync`.
@@ -618,10 +619,9 @@ public actor CallRecordingCoordinator {
     /// caption and the Kommo note — Windows-parity `BuildCaption`'s
     /// "💾 Google Drive: {url}" line — before Telegram-send and the Kommo
     /// note+call-metadata legs fire concurrently), then persists the
-    /// Drive/Telegram outcome to `RecordingHistory` so any step that failed
-    /// gets picked up later by `retryPendingUploads()` instead of being
-    /// lost. Kommo has no such tracking (see
-    /// `UploadOrchestrator.attemptKommo`'s doc comment).
+    /// Drive/Telegram/Kommo outcome to `RecordingHistory` so any step that
+    /// failed gets picked up later by `retryPendingUploads()` instead of
+    /// being lost.
     private func uploadRecording(
         fileURL: URL, entryID: UUID, caption: String, crmUrl: String?,
         callStartedAt: Date?, callType: String?, skipTelegram: Bool
@@ -647,17 +647,19 @@ public actor CallRecordingCoordinator {
             driveFailed: result.driveFailed,
             telegramMessageId: result.telegramMessageId,
             telegramFailed: result.telegramFailed,
-            kommoNoteId: result.kommoNoteId
+            kommoNoteId: result.kommoNoteId,
+            kommoFailed: result.kommoFailed
         )
 
         // Windows parity: `HomeViewModel.cs:651`/`:656` — success toast when
         // every attempted leg landed, or a warning toast naming which one(s)
         // didn't (they'll be picked up later by `retryPendingUploads()`
         // rather than lost).
-        if result.driveFailed || result.telegramFailed {
+        if result.driveFailed || result.telegramFailed || result.kommoFailed {
             var failedParts: [String] = []
             if result.driveFailed { failedParts.append("Google Drive") }
             if result.telegramFailed { failedParts.append("Telegram") }
+            if result.kommoFailed { failedParts.append("Kommo") }
             NotificationService.showError("Запис збережено, але не всі сервіси спрацювали: \(failedParts.joined(separator: ", ")).")
         } else {
             NotificationService.showSuccess("Запис збережено та відправлено.")
@@ -716,20 +718,21 @@ public actor CallRecordingCoordinator {
             let result = await UploadOrchestrator.run(
                 filePath: filePath,
                 caption: caption,
-                // RecordingEntry has no crmUrl/callStartedAt/callType fields
-                // (never persisted — see RecordingEntry's doc comment), so a
-                // background retry can never attempt/re-attempt the Kommo
-                // note or call-metadata legs, only Drive/Telegram.
-                crmUrl: nil,
-                callStartedAt: nil,
-                callType: nil,
+                // Sourced from what was already persisted for this entry —
+                // `reportData` (crmUrl/resolvedCallType) is written by
+                // finishRecording/resumeDraft before the first upload
+                // attempt ever fires, and startedAt exists from the moment
+                // the entry itself is created. Lets a Kommo-only failure
+                // (crmUrl present, note post/metadata failed) actually get
+                // retried here instead of being dropped forever.
+                crmUrl: entry.reportData?.crmUrl,
+                callStartedAt: entry.startedAt,
+                callType: entry.reportData?.resolvedCallType,
                 existingDriveUrl: entry.driveUrl,
                 existingTelegramMessageId: entry.telegramMessageId,
                 // Preserves whatever note id an earlier attempt already
-                // captured — crmUrl is always nil on a background retry (see
-                // the doc comment on the `crmUrl:` argument a few lines up),
-                // so attemptKommo never posts a *new* note here; it just
-                // hands this back unchanged.
+                // captured — attemptKommo skips re-posting whenever this is
+                // already non-nil, so a note only ever gets created once.
                 existingKommoNoteId: entry.kommoNoteId,
                 telegramClient: client,
                 skipTelegram: skipTelegram
@@ -741,10 +744,11 @@ public actor CallRecordingCoordinator {
                 driveFailed: result.driveFailed,
                 telegramMessageId: result.telegramMessageId,
                 telegramFailed: result.telegramFailed,
-                kommoNoteId: result.kommoNoteId
+                kommoNoteId: result.kommoNoteId,
+                kommoFailed: result.kommoFailed
             )
 
-            if !result.driveFailed && !result.telegramFailed {
+            if !result.driveFailed && !result.telegramFailed && !result.kommoFailed {
                 print("[CallRecordingCoordinator] ✅ фоновий retry доробив запис \(fileName).")
                 // Windows parity: `PendingUploadRetryService.cs:145`.
                 NotificationService.showSuccess("Запис, який раніше не вдалося відправити, тепер успішно доставлено.")

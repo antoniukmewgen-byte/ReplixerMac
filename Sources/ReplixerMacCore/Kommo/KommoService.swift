@@ -133,11 +133,11 @@ public enum KommoService {
     /// Telegram token: a normal "integration not opted into" skip, not an
     /// error worth surfacing.
     ///
-    /// No retry-on-failure here (unlike `GoogleDriveUploadService.upload`'s
-    /// one-retry-after-5s, or `PendingUploadRetryService`'s background
-    /// sweep) — deliberately out of scope for this minimal slice; a failed
-    /// note is logged by the caller and not tracked anywhere for a later
-    /// retry attempt yet.
+    /// Windows parity: `KommoService.PostNoteAsync` — 3 attempts total, with
+    /// a 2s/4s backoff between them, before giving up and rethrowing the
+    /// last error. `.notConfigured`/`.invalidLeadURL` aren't worth retrying
+    /// (retrying won't fix a missing token or an unparseable URL), so those
+    /// are thrown immediately without consuming an attempt.
     ///
     /// Phase 11.4: returns the created note's id (`nil` if the response
     /// shape is unexpected — treated as "couldn't determine the id", not a
@@ -154,6 +154,27 @@ public enum KommoService {
         }
         guard let (subdomain, leadId) = parseLeadURL(crmUrl) else {
             throw KommoError.invalidLeadURL
+        }
+
+        let maxAttempts = 3
+        var lastError: Error = KommoError.requestFailed("невідома помилка")
+        for attempt in 1...maxAttempts {
+            do {
+                return try await postNote(subdomain: subdomain, leadId: leadId, text: text)
+            } catch {
+                lastError = error
+                guard attempt < maxAttempts else { break }
+                let delaySeconds = UInt64(attempt) * 2
+                print("[KommoService] ⚠️ не вдалося додати нотатку (спроба \(attempt)/\(maxAttempts)): \(error). Повторна спроба через \(delaySeconds)с...")
+                try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+            }
+        }
+        throw lastError
+    }
+
+    private static func postNote(subdomain: String, leadId: String, text: String) async throws -> Int64? {
+        guard let token = AppSettings.shared.kommoApiToken, !token.isEmpty else {
+            throw KommoError.notConfigured
         }
         guard let url = URL(string: "https://\(subdomain).kommo.com/api/v4/leads/\(leadId)/notes") else {
             throw KommoError.invalidLeadURL
