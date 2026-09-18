@@ -19,6 +19,11 @@ public enum NotificationService {
         ToastStore.shared.push(message: message, kind: .success)
     }
 
+    public static func showWarning(_ message: String) {
+        guard AppSettings.shared.isNotificationsEnabled else { return }
+        ToastStore.shared.push(message: message, kind: .warning)
+    }
+
     public static func showError(_ message: String) {
         guard AppSettings.shared.isNotificationsEnabled else { return }
         ToastStore.shared.push(message: message, kind: .error)

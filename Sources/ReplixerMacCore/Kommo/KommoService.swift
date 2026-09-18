@@ -52,6 +52,7 @@ public enum KommoService {
     // Phase 10.1c: "Скорость обработки в рабочее время" — written by
     // `trySetLocalTimeProcessingSpeed` below.
     private static let processingSpeedLocalTimeFieldId: Int64 = 1227531
+    private static let defaultFallbackTimeZoneId = "America/New_York"
     private static let contactPhoneFieldId: Int64 = 458590
     private static let sourceFieldId: Int64 = 1220023
     private static let reactivationEnumId: Int64 = 1028911
@@ -464,16 +465,17 @@ public enum KommoService {
         if details.speedWorkMinutesOccupied {
             // Already set — leave it, matching Windows' "keep whatever's there" branch.
             workMinutes = details.speedWorkMinutes
-        } else if details.contactId != nil || details.companyId != nil {
+        } else {
+            // Windows parity (v1.7.3): no longer skipped when the lead has
+            // no linked contact/company — trySetLocalTimeProcessingSpeed
+            // itself now falls back to an approximate US timezone rather
+            // than leaving the field empty.
             workMinutes = await trySetLocalTimeProcessingSpeed(
                 baseURL: baseURL, token: token, leadId: leadId,
                 contactId: details.contactId, companyId: details.companyId,
                 leadCreatedAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
                 firstContactAt: Date(timeIntervalSince1970: TimeInterval(firstContactUnix))
             )
-        } else {
-            print("[KommoService] ⚠️ лід \(leadId) без прив'язаного контакту чи компанії — поле 'робочий час' не заповнено.")
-            workMinutes = nil
         }
 
         return (minutes, workMinutes)
@@ -485,7 +487,12 @@ public enum KommoService {
     /// firstContactAt]` falls inside the configured workday window
     /// (`AppSettings.shared.workDayStartMinutes/EndMinutes`) in that local
     /// time — same "робочий час" definition as Windows'
-    /// `CalculateWorkingHoursDuration`.
+    /// `CalculateWorkingHoursDuration`. As of v1.7.3, rather than leaving the
+    /// field empty when there's no phone or the phone's timezone can't be
+    /// resolved, falls back to `defaultFallbackTimeZoneId` and computes an
+    /// approximate value anyway — surfaced to the user via a warning toast
+    /// (`NotificationService.showWarning`) instead of only an error report,
+    /// since the field genuinely does get filled in (just approximately).
     private static func trySetLocalTimeProcessingSpeed(
         baseURL: String, token: String, leadId: String,
         contactId: String?, companyId: String?,
@@ -498,14 +505,23 @@ public enum KommoService {
         if (phone?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true), let companyId {
             phone = await getCompanyPhone(baseURL: baseURL, token: token, companyId: companyId)
         }
-        guard let phone, !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("[KommoService] ⚠️ контакт \(contactId ?? "—") і компанія \(companyId ?? "—") (лід \(leadId)) без телефону — поле 'робочий час' не заповнено.")
-            return nil
-        }
+        let trimmedPhone = phone?.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let (timeZone, isUkrainian) = resolveTimeZone(fromPhone: phone) else {
-            print("[KommoService] ⚠️ не вдалося визначити часовий пояс за номером '\(phone)' (лід \(leadId)) — поле 'робочий час' не заповнено.")
-            return nil
+        let timeZone: TimeZone
+        let isUkrainian: Bool
+        if trimmedPhone == nil || trimmedPhone!.isEmpty {
+            print("[KommoService] ⚠️ контакт \(contactId ?? "—") і компанія \(companyId ?? "—") (лід \(leadId)) без телефону — час обробки розраховано приблизно (США).")
+            timeZone = TimeZone(identifier: defaultFallbackTimeZoneId)!
+            isUkrainian = false
+            NotificationService.showWarning("Лід \(leadId): номер телефону відсутній — час обробки розраховано приблизно (США)")
+        } else if let resolved = resolveTimeZone(fromPhone: trimmedPhone!) {
+            timeZone = resolved.timeZone
+            isUkrainian = resolved.isUkrainian
+        } else {
+            print("[KommoService] ⚠️ не вдалося визначити часовий пояс за номером '\(trimmedPhone!)' (лід \(leadId)) — час обробки розраховано приблизно (США).")
+            timeZone = TimeZone(identifier: defaultFallbackTimeZoneId)!
+            isUkrainian = false
+            NotificationService.showWarning("Лід \(leadId): не вдалося визначити часовий пояс за номером '\(trimmedPhone!)' — час обробки розраховано приблизно (США)")
         }
 
         // Для українських номерів вікно робочого часу зсувається на +7 год

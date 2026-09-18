@@ -41,19 +41,28 @@ struct ToastStackView: View {
 }
 
 /// A single toast card — rounded rect, left accent border colored per
-/// `kind` (Windows: `OtherBrushColor1`/`OtherBrushColor4` via `DataTrigger`
-/// on `IsError`; here `Theme.Status.saved` for success and plain `.red` for
-/// error, since `Theme.Status.recording` is semantically reserved for the
-/// recording indicator elsewhere in the app), plus a ✓/✕ SF Symbol glyph.
+/// `kind` (Windows: `OtherBrushColor1`/`OtherBrushColor3`/`OtherBrushColor4`
+/// via `DataTrigger` on `IsWarning`/`IsError`; here `Theme.Status.saved` for
+/// success, `.orange` for warning, and plain `.red` for error, since
+/// `Theme.Status.recording` is semantically reserved for the recording
+/// indicator elsewhere in the app), plus a ✓/⚠/✕ SF Symbol glyph.
 private struct ToastCardView: View {
     let toast: ToastStore.Toast
 
     private var tint: Color {
-        toast.kind == .success ? Theme.Status.saved : .red
+        switch toast.kind {
+        case .success: return Theme.Status.saved
+        case .warning: return .orange
+        case .error:   return .red
+        }
     }
 
     private var systemImage: String {
-        toast.kind == .success ? "checkmark.circle.fill" : "xmark.circle.fill"
+        switch toast.kind {
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error:   return "xmark.circle.fill"
+        }
     }
 
     var body: some View {

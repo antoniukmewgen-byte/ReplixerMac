@@ -22,6 +22,7 @@ public final class ToastStore {
 
     public enum Kind: Sendable {
         case success
+        case warning
         case error
     }
 
@@ -31,10 +32,11 @@ public final class ToastStore {
         public let kind: Kind
     }
 
-    // Windows parity: NotificationsViewModel's SuccessSeconds/ErrorSeconds
-    // constants (3.0/5.0) — how long a toast stays on screen before it's
-    // removed.
+    // Windows parity: NotificationsViewModel's SuccessSeconds/WarningSeconds/
+    // ErrorSeconds constants (3.0/5.0/5.0) — how long a toast stays on
+    // screen before it's removed.
     private static let successSeconds: UInt64 = 3
+    private static let warningSeconds: UInt64 = 5
     private static let errorSeconds: UInt64 = 5
 
     private let lock = NSLock()
@@ -59,7 +61,12 @@ public final class ToastStore {
         lock.unlock()
         NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
 
-        let seconds = kind == .success ? Self.successSeconds : Self.errorSeconds
+        let seconds: UInt64
+        switch kind {
+        case .success: seconds = Self.successSeconds
+        case .warning: seconds = Self.warningSeconds
+        case .error:   seconds = Self.errorSeconds
+        }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             self?.remove(toast.id)
