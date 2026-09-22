@@ -276,6 +276,13 @@ struct ContentView: View {
         .overlay(alignment: .bottomTrailing) {
             ToastStackView()
         }
+        // TEMPORARY (remove in next release): blocks all interaction with
+        // the app and shows a "not working" message. Placed last so it
+        // stacks above the toast overlay too, and covers the full window
+        // (sidebar + detail), not just one pane.
+        .overlay {
+            AppDisabledOverlay()
+        }
     }
 
     @ViewBuilder
@@ -317,5 +324,39 @@ struct ContentView: View {
                 }
             }
         }
+    }
+}
+
+// TEMPORARY (remove in next release): full-window blocking overlay — dims
+// everything underneath, absorbs all clicks/scrolls via `.contentShape` +
+// `.onTapGesture {}` (an empty gesture still claims the hit, same as
+// `.allowsHitTesting(true)` combined with "do nothing"), and shows a single
+// message card. Delete this struct and its `.overlay { AppDisabledOverlay() }`
+// call in ContentView.body once the app is working again.
+private struct AppDisabledOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.8)
+                .ignoresSafeArea()
+            VStack(spacing: 14) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.yellow)
+                Text("НАРАЗІ ДОДАТОК НЕ ПРАЦЮЄ")
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                Text("Це тимчасова міра — функціональність повернеться в наступному оновленні.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(32)
+            .frame(maxWidth: 420)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 }

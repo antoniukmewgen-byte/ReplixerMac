@@ -261,7 +261,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 await coordinator.callEnded(messenger: messenger, processName: name)
             }
         }
-        monitor.start()
+        // TEMPORARY (remove in next release, alongside ContentView's
+        // AppDisabledOverlay): call-detection is switched off for now —
+        // monitor.start() is what wires up the mic/speaker heuristic that
+        // fires onCallStarted/onCallEnded above, so leaving it uncalled
+        // means no confirm dialog, no recording, nothing downstream ever
+        // triggers.
+        // monitor.start()
         pendingUploadRetryService.start()
         // Phase 11.5: missed-call reports' Kommo delivery queue — same
         // "start once at launch, stop on quit" lifecycle as
@@ -279,6 +285,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // the wizard itself sets `isSetupComplete = true`.
         if AppSettings.shared.isSetupComplete {
             MissedCallReminderWindowController.shared.show()
+        }
+
+        // TEMPORARY (remove in next release, alongside the other two
+        // "TEMPORARY" spots in this file/ContentView.swift): auto-quit 20s
+        // after launch. Goes through NSApp.terminate(nil), same path as a
+        // manual Cmd+Q/Dock-quit, so applicationShouldTerminate(_:) above
+        // still runs its normal flush/shutdown sequence rather than just
+        // killing the process.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            NSApp.terminate(nil)
         }
     }
 
